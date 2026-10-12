@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>ArdubsEnemyIntelligence</AssemblyName>
+    <RootNamespace>ArdubsEnemyIntelligence</RootNamespace>
+    <Version>0.1.62</Version>
+    <Title>Ardub's Enemy Intelligence</Title>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+  <Import Project="$(MSBuildProjectDirectory)/../GamePath.props" Condition="Exists('$(MSBuildProjectDirectory)/../GamePath.props')" />
+  <ItemGroup>
+    <Reference Include="$(WrathInstallDir)/Wrath_Data/Managed/Assembly-CSharp.dll" Publicize="true" Private="false" />
+    <Reference Include="$(WrathInstallDir)/Wrath_Data/Managed/0Harmony.dll" Private="false" />
+    <Reference Include="$(WrathInstallDir)/Wrath_Data/Managed/UnityModManager/UnityModManager.dll" Private="false" />
+    <Reference Include="$(WrathInstallDir)/Wrath_Data/Managed/UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="$(WrathInstallDir)/Wrath_Data/Managed/UnityEngine.AnimationModule.dll" Private="false" />
+    <Reference Include="$(WrathInstallDir)/Wrath_Data/Managed/UnityEngine.IMGUIModule.dll" Private="false" />
+    <Reference Include="$(WrathInstallDir)/Wrath_Data/Managed/UnityEngine.TextRenderingModule.dll" Private="false" />
+    <Reference Include="$(WrathInstallDir)/Wrath_Data/Managed/UnityEngine.PhysicsModule.dll" Private="false" />
+    <Reference Include="$(WrathInstallDir)/Wrath_Data/Managed/Owlcat.Runtime.Core.dll" Private="false" />
+    <Reference Include="$(WrathInstallDir)/Wrath_Data/Managed/Owlcat.Runtime.UI.dll" Private="false" />
+    <Reference Include="$(WrathInstallDir)/Wrath_Data/Managed/Owlcat.Runtime.Visual.dll" Private="false" />
+    <Reference Include="$(WrathInstallDir)/Wrath_Data/Managed/AstarPathfindingProject.dll" Private="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Info.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../README.md" Link="README.md" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../TECHNICAL_NOTES.md" Link="TECHNICAL_NOTES.md" CopyToOutputDirectory="PreserveNewest"
+          Condition="Exists('$(MSBuildProjectDirectory)/../TECHNICAL_NOTES.md')" />
+    <None Include="../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.2" PrivateAssets="all" />
+    <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.2" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,5 @@
+bin/
+obj/
+.vs/
+GamePath.props
+EnemyIntelligence-*.zip

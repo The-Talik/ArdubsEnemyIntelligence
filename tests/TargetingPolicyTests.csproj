@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="fixtures/**/*.cs" />
+    <Compile Include="../ArdubsEnemyIntelligence/TargetingPolicy.cs" Link="TargetingPolicy.cs" />
+    <Compile Include="../ArdubsEnemyIntelligence/ManagedActorPolicy.cs" Link="ManagedActorPolicy.cs" />
+    <Compile Include="../ArdubsEnemyIntelligence/BodyBlockingPolicy.cs" Link="BodyBlockingPolicy.cs" />
+    <Compile Include="../ArdubsEnemyIntelligence/TargetScoreBreakdown.cs" Link="TargetScoreBreakdown.cs" />
+    <Compile Include="../ArdubsEnemyIntelligence/DistancePolicy.cs" Link="DistancePolicy.cs" />
+    <Compile Include="../ArdubsEnemyIntelligence/SquishPolicy.cs" Link="SquishPolicy.cs" />
+    <Compile Include="../ArdubsEnemyIntelligence/RiskPolicy.cs" Link="RiskPolicy.cs" />
+    <Compile Include="../ArdubsEnemyIntelligence/LogNumber.cs" Link="LogNumber.cs" />
+    <Compile Include="../ArdubsEnemyIntelligence/LogPresentation.cs" Link="LogPresentation.cs" />
+    <Compile Include="../ArdubsEnemyIntelligence/ScoringWeights.cs" Link="ScoringWeights.cs" />
+    <Compile Include="../ArdubsEnemyIntelligence/EncounterLabels.cs" Link="EncounterLabels.cs" />
+    <Compile Include="../ArdubsEnemyIntelligence/TurnTargetLock.cs" Link="TurnTargetLock.cs" />
+    <Compile Include="../ArdubsEnemyIntelligence/SleepingTargetPolicy.cs" Link="SleepingTargetPolicy.cs" />
+  </ItemGroup>
+</Project>
