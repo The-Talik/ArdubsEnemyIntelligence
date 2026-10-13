@@ -25,6 +25,44 @@ static void EqualText(string expected, string actual, string label)
     }
 }
 
+// Condition knowledge is independent of full AC knowledge, cached across
+// action candidates, and invalidated when the visible body state changes.
+Equal(0, TargetingPolicy.KnowledgeChance(5, 5, 15), "condition gate's default lower endpoint");
+Equal(0.8, TargetingPolicy.KnowledgeChance(13, 5, 15), "Int 13 recognizes vulnerability with 80% chance");
+Equal(1, TargetingPolicy.KnowledgeChance(15, 5, 15), "condition gate's default upper endpoint");
+var paralyzed = VisibleDefenseCondition.Paralyzed | VisibleDefenseCondition.Helpless;
+var conditionMemory = new ConditionRecognitionMemory();
+Equal(0, conditionMemory.ShouldRoll(VisibleDefenseCondition.None, false) ? 1 : 0, "normal target needs no vulnerability roll");
+Equal(1, conditionMemory.ShouldRoll(paralyzed, false) ? 1 : 0, "new visible paralysis gets a recognition roll");
+conditionMemory.Record(false);
+Equal(0, conditionMemory.Known ? 1 : 0, "failed condition roll does not grant knowledge");
+Equal(0, conditionMemory.ShouldRoll(paralyzed, false) ? 1 : 0, "another candidate does not reroll failed recognition");
+Equal(1, conditionMemory.ShouldRoll(paralyzed, true) ? 1 : 0, "an attack permits one defensive reroll");
+conditionMemory.Record(false);
+Equal(0, conditionMemory.ShouldRoll(paralyzed, true) ? 1 : 0, "a failed observation reroll is not repeated");
+Equal(0, conditionMemory.ShouldRoll(VisibleDefenseCondition.None, false) ? 1 : 0, "recovery clears recognition without rolling");
+Equal(1, conditionMemory.ShouldRoll(paralyzed, false) ? 1 : 0, "a later paralysis episode can be recognized afresh");
+conditionMemory.Record(true);
+Equal(1, conditionMemory.Known ? 1 : 0, "successful condition roll grants recognition");
+Equal(0, conditionMemory.ShouldRoll(paralyzed, true) ? 1 : 0, "known vulnerability needs no further rolls");
+Equal(1, conditionMemory.ShouldRoll(VisibleDefenseCondition.Prone, false) ? 1 : 0, "a different visible state needs its own recognition");
+Equal(0, conditionMemory.Known ? 1 : 0, "recognizing paralysis does not automatically recognize another condition");
+Equal(-24, ConditionDefensePolicy.ArmorAdjustment(51, 31, paralyzed, true), "melee uses native flat-footed AC plus helpless penalty");
+Equal(-20, ConditionDefensePolicy.ArmorAdjustment(51, 31, paralyzed, false), "ranged attacks get no helpless melee penalty");
+Equal(-24, ConditionDefensePolicy.ArmorAdjustment(36, 16, paralyzed, true), "touch uses its own normal and flat-footed values");
+Equal(-4, ConditionDefensePolicy.ArmorAdjustment(51, 31, VisibleDefenseCondition.Prone, true), "prone helps melee without assuming flat-footed");
+Equal(4, ConditionDefensePolicy.ArmorAdjustment(51, 31, VisibleDefenseCondition.Prone, false), "prone hinders ranged attacks");
+Equal(-20, ConditionDefensePolicy.ArmorAdjustment(51, 31, VisibleDefenseCondition.Stunned, true), "stunned loses flat-footed defenses without helpless melee penalty");
+Equal(-28, ConditionDefensePolicy.ArmorAdjustment(51, 31, paralyzed | VisibleDefenseCondition.Prone, true), "native distinct condition penalties combine");
+Equal(0, ConditionDefensePolicy.ArmorAdjustment(51, 31, VisibleDefenseCondition.None, true), "recovered target loses all condition adjustments");
+Equal(27, ConditionDefensePolicy.AssessedArmor(true, 51, -24), "learned AC keeps its baseline with current condition delta");
+Equal(-4, ConditionDefensePolicy.AssessedArmor(false, 51, -24), "unknown AC uses neutral estimate, not hidden AC");
+Equal(20, ConditionDefensePolicy.AssessedArmor(false, 99, 0), "failed recognition and unknown AC remain neutral");
+if (TargetingPolicy.ArmorFactor(ConditionDefensePolicy.AssessedArmor(true, 51, -24)) <= TargetingPolicy.ArmorFactor(51))
+    throw new Exception("Recognized paralysis must increase Squish for the same known AC.");
+// Negative effective estimates are intentional: no clipping hides the result.
+if (TargetingPolicy.ArmorFactor(-4) <= 1m) throw new Exception("Condition estimates must remain defined without clamps.");
+
 // Actor scope is independent of target scoring: opt-in allies must target
 // their own enemies, without taking over party assets or neutral NPCs.
 foreach (var enabled in new[] { false, true })
@@ -524,6 +562,19 @@ catch (ArgumentException)
 var castInRange = new AbilityDistancePlan(0m, 1.524m, 18m, 1.524m, 18m, true);
 Equal(0, castInRange.WaitTurns, "in-range full-round ability can act now");
 EqualDecimal(1m, castInRange.Factor, "in-range ability has neutral Dist");
+var fullRoundStep = new AbilityDistancePlan(1.44m, 2.29m, 24.38m, 1.524m, 24.38m, true, 2.29m);
+Equal(0, fullRoundStep.WaitTurns, "logged Dominate approach preserves a full-round cast this turn");
+if (!fullRoundStep.FiveFootStep) throw new Exception("Full-round casting must explicitly select the five-foot step used by its timing estimate.");
+if (new AbilityDistancePlan(0m, 2.29m, 24.38m, 1.524m, 24.38m, true, 2.29m).FiveFootStep)
+    throw new Exception("An in-range cast must clear a previous candidate's movement mode.");
+if (new AbilityDistancePlan(2.291m, 2.29m, 24.38m, 1.524m, 24.38m, true, 2.29m).FiveFootStep)
+    throw new Exception("A full-round cast outside step range must not select a five-foot step.");
+if (new AbilityDistancePlan(1.44m, 2.29m, 24.38m, 1.524m, 24.38m, false, 2.29m).FiveFootStep)
+    throw new Exception("An unavailable cast must not use a step that falsely preserves its spent action.");
+if (new AbilityDistancePlan(1m, 12m, 24m, 12m, 24m, true).FiveFootStep)
+    throw new Exception("No available five-foot step must mean ordinary movement.");
+if (!new AbilityDistancePlan(1m, 12m, 24m, 12m, 24m, true, 1.524m).FiveFootStep)
+    throw new Exception("A short standard ability approach should also carry its legal step mode.");
 var castAfterStep = new AbilityDistancePlan(6m, 1.524m, 18m, 1.524m, 18m, true);
 Equal(1, castAfterStep.WaitTurns, "full-round ability cannot follow ordinary movement");
 EqualDecimal(0.1m, castAfterStep.TimingFactor, "a cast delayed to next turn is strongly discounted");
@@ -648,6 +699,24 @@ for (var bonus = -30; bonus <= 30; bonus++)
         throw new Exception("Stronger saves must not improve Squish; half-save weights must be nearer neutral.");
     }
 }
+EqualDecimal(1m, SquishPolicy.HitPointsFactor(100, 100), "full HP is neutral");
+EqualDecimal(4m / 3m, SquishPolicy.HitPointsFactor(50, 100), "half HP increases Squish");
+EqualDecimal(20m / 11m, SquishPolicy.HitPointsFactor(10, 100), "ten percent HP favors finishing wounded targets");
+EqualDecimal(2m, SquishPolicy.HitPointsFactor(0, 100), "conscious at zero HP remains finite");
+EqualDecimal(2m, SquishPolicy.HitPointsFactor(-10, 100), "conscious negative HP feature has no pole");
+EqualDecimal(2m / 3m, SquishPolicy.HitPointsFactor(200, 100), "above-normal HP is handled without clipping");
+EqualDecimal(SquishPolicy.HitPointsFactor(50, 100), SquishPolicy.HitPointsFactor(5, 10), "same health percentage has same preference");
+EqualDecimal(2m, SquishPolicy.HitPointsFactor(int.MinValue, int.MaxValue), "HP factor does not overflow on extreme stats");
+EqualDecimal(1m, ScoringWeights.Importance(SquishPolicy.HitPointsFactor(1, 100), 0m), "HP preference can be disabled");
+Equal(0, TargetingPolicy.KnowledgeChance(5, 5, 15), "default HP gate is zero at Int 5");
+Equal(1, TargetingPolicy.KnowledgeChance(15, 5, 15), "default HP gate is certain at Int 15");
+Equal(1, TargetingPolicy.KnowledgeChance(5 + 10, 5, 15), "HP defensive retry uses the existing +10 Int bonus");
+for (var remaining = -10; remaining <= 110; remaining++)
+    if (SquishPolicy.HitPointsFactor(remaining + 1, 100) > SquishPolicy.HitPointsFactor(remaining, 100))
+        throw new Exception("Healing must never make an HP-damaging target more squishy.");
+try { SquishPolicy.HitPointsFactor(1, 0); throw new Exception("Invalid maximum HP was silently accepted."); }
+catch (ArgumentOutOfRangeException) { }
+
 EqualDecimal(1m, SquishPolicy.IneffectiveFactor(100, 2), "Int 2 ignores ineffective damage");
 EqualDecimal(1m, SquishPolicy.IneffectiveFactor(1, 5), "Int 5 needs repeated ineffective damage");
 EqualDecimal(0.5m, SquishPolicy.IneffectiveFactor(2, 5), "Int 5 repeated evidence");

@@ -333,6 +333,8 @@ internal static class TargetingState
             knowledge.HasTargeted = true;
             var checks = LearnDefenses(actor, target, knowledge, defenses, 10);
             LearnDamageResponse(actor, knowledge, 10);
+            LearnHitPoints(actor, target, knowledge, 10);
+            LearnConditions(actor, target, knowledge, afterAttack: true);
             ReportLearningAssessment(actor, target, knowledge, null, checks);
         }
 
@@ -438,10 +440,21 @@ internal static class TargetingState
         if (!IsManaged(actor)) return;
         var memory = GetEnemy(actor);
         var knowledge = GetKnowledge(actor, target, memory);
+        var ability = AttackAssessment.SourceSpell(reason);
         if (result > 0 && attack?.Weapon != null)
         {
             memory.UsefulNonHp.Add(attack);
             knowledge.Effectiveness.Observe(AttackAssessment.WeaponKey(attack.Weapon), 1, 1, 1, false);
+        }
+        if (ability != null && (result > 0 || immune))
+        {
+            var hits = knowledge.Effectiveness.Observe(AttackAssessment.SpellKey(ability), result,
+                result, result, immune);
+            TargetingLog.WriteLearning($"{UnitLabel(actor)}'s {ability.Name} -> {UnitLabel(target)}: " +
+                $"{label}[{result}; immune {(immune ? "yes" : "no")}]; ineffective events for this ability {hits}");
+        }
+        else if (result > 0 && attack?.Weapon != null)
+        {
             TargetingLog.WriteLearning($"{UnitLabel(actor)} dealt {label} {result} to {UnitLabel(target)}; " +
                 "this weapon hit was useful even if HP damage was zero");
         }
@@ -595,10 +608,24 @@ internal static class TargetingState
             {
                 var kind = profile.ArmorDefense.Value;
                 var defense = knowledge.Defenses[kind];
-                var factor = defense.Known ? TargetingPolicy.ArmorFactor(defense.Value) : 1m;
+                // A remembered target's current conditions are not visible facts.
+                // Unknown AC stays unknown: recognition only supplies the
+                // condition delta, applied to the existing neutral AC estimate.
+                var visible = actor.Memory.ContainsVisible(target);
+                var conditions = visible ? AttackAssessment.ObservableConditions(target) : VisibleDefenseCondition.None;
+                var recognized = visible && knowledge.Conditions.Known && knowledge.Conditions.Conditions == conditions;
+                var adjustment = recognized ? profile.ConditionArmorAdjustment(target, conditions) : 0;
+                var assessedArmor = ConditionDefensePolicy.AssessedArmor(defense.Known, defense.Value, adjustment);
+                var factor = defense.Known || adjustment != 0 ? TargetingPolicy.ArmorFactor(assessedArmor) : 1m;
                 defenseFactor *= factor;
-                parts.Add(!defense.Known ? $"{AttackAssessment.Label(kind)}[Unknown => 1]" :
-                    $"{AttackAssessment.Label(kind)}[{defense.Value} => {LogNumber.Format(factor)}]");
+                var basis = defense.Known ? defense.Value.ToString(CultureInfo.InvariantCulture) : "Unknown; neutral estimate 20";
+                parts.Add(conditions == VisibleDefenseCondition.None || !recognized
+                    ? !defense.Known ? $"{AttackAssessment.Label(kind)}[Unknown => 1]" :
+                        $"{AttackAssessment.Label(kind)}[{defense.Value} => {LogNumber.Format(factor)}]"
+                    : $"{AttackAssessment.Label(kind)}[{basis}; Conditions[{conditions}; adjustment {adjustment:+0;-0;0}]" +
+                        $" => assessed {assessedArmor} => {LogNumber.Format(factor)}]");
+                if (conditions != VisibleDefenseCondition.None && !recognized)
+                    parts.Add($"Conditions[{conditions}; not recognized => no AC adjustment]");
             }
             if (profile.SaveDefense.HasValue)
             {
@@ -624,16 +651,25 @@ internal static class TargetingState
             {
                 parts.Add("Defense[no supported attack roll or top-level save => 1]");
             }
-            if (profile.WeaponItem != null)
+            if (profile.WeaponItem != null || profile.Ability != null)
             {
                 if (knowledge.DamageResponseKnown)
                 {
+                    var visible = actor.Memory.ContainsVisible(target);
                     if (!knowledge.Protection.TryGetValue(profile.EvidenceKey, out var protection) ||
-                        Intelligence(actor) >= ArdubsEnemyIntelligenceMain.Settings.ActiveDamageResponseMaximum)
+                        visible)
                     {
-                        var preview = GetOffensiveEstimate(actor, actor)?.Hits
-                            .FirstOrDefault(hit => ReferenceEquals(hit.Item, profile.WeaponItem));
-                        protection = preview == null ? DamageProtection.Unavailable : DamageProtection.Evaluate(target, preview);
+                        // Observed buffs can change even for a middle-Int enemy.
+                        // Refresh known protection while visible, but never read
+                        // newly gained/lost hidden buffs from a remembered unit.
+                        if (!visible) protection = DamageProtection.Unavailable;
+                        else if (profile.WeaponItem != null)
+                        {
+                            var preview = GetOffensiveEstimate(actor, actor)?.Hits
+                                .FirstOrDefault(hit => ReferenceEquals(hit.Item, profile.WeaponItem));
+                            protection = preview == null ? DamageProtection.Unavailable : DamageProtection.Evaluate(target, preview);
+                        }
+                        else protection = AbilityProtection.Evaluate(target, profile.Ability!);
                         knowledge.Protection[profile.EvidenceKey] = protection;
                     }
                     defenseFactor *= protection.Factor;
@@ -641,6 +677,21 @@ internal static class TargetingState
                 }
                 else parts.Add("Protection[Unknown => 1]");
             }
+            if (profile.DealsHitPointDamage)
+            {
+                if (knowledge.HitPointsKnown)
+                {
+                    var rawHp = SquishPolicy.HitPointsFactor(knowledge.RemainingHitPoints, knowledge.MaximumHitPoints);
+                    var importance = ArdubsEnemyIntelligenceMain.Settings.ActiveHitPointsImportance;
+                    var hp = ScoringWeights.Importance(rawHp, importance);
+                    defenseFactor *= hp;
+                    var lastSeen = actor.Memory.ContainsVisible(target) ? "" : "; last seen";
+                    parts.Add($"HP[{knowledge.RemainingHitPoints}/{knowledge.MaximumHitPoints}{lastSeen}; " +
+                        $"health factor {LogNumber.Format(rawHp)} ^ Importance[{LogNumber.Format(importance)}] => {LogNumber.Format(hp)}]");
+                }
+                else parts.Add("HP[Unknown => 1]");
+            }
+            else parts.Add("HP[no direct HP damage => 1]");
             var hits = knowledge.Effectiveness.Hits(profile.EvidenceKey);
             var ineffective = SquishPolicy.IneffectiveFactor(hits, Intelligence(actor));
             parts.Add($"Ineffective[{profile.Name}; {hits} events; Int {Intelligence(actor)} => " +
@@ -665,6 +716,9 @@ internal static class TargetingState
         }
     }
 
+    internal static void ApplyMovementMode(DecisionContext context, DistanceScoring.Result result) =>
+        context.CurrentEnableFiveFootStep = result.Factor > 0m && result.FiveFootStep;
+
     internal static void FinishPathScore(PathScoreState? state)
     {
         if (state == null)
@@ -683,6 +737,7 @@ internal static class TargetingState
             {
                 if (BodyBlocking.AbilityRouteIssue(context) is { } issue)
                 {
+                    ApplyMovementMode(context, new DistanceScoring.Result(0m, issue));
                     if (memory.Scores.TryGetValue(state.Action, out var rejectedScores) &&
                         rejectedScores.TryGetValue(context.Target.Unit, out var rejectedTrace))
                         rejectedTrace.SetDistance(0m, $"Unavailable[{issue} => 0]");
@@ -691,6 +746,7 @@ internal static class TargetingState
                 }
                 var abilityResult = DistanceScoring.EvaluateAbility(context,
                     context.CurrentScore / state.BeforePath);
+                ApplyMovementMode(context, abilityResult);
                 context.CurrentScore = state.BeforePath * abilityResult.Factor;
                 if (memory.Scores.TryGetValue(state.Action, out var abilityScores) &&
                     abilityScores.TryGetValue(context.Target.Unit, out var abilityTrace))
@@ -710,7 +766,7 @@ internal static class TargetingState
                 ? new DistanceScoring.Result(0m, "Unavailable[vanilla movement score rejected action => 0]")
                 : DistanceScoring.Evaluate(context, state.Route, UnitLabel);
             context.CurrentScore = state.BeforePath * result.Factor;
-            context.CurrentEnableFiveFootStep = result.Factor > 0m && result.FiveFootStep;
+            ApplyMovementMode(context, result);
             if (memory.Scores.TryGetValue(state.Action, out var scores) &&
                 scores.TryGetValue(context.Target.Unit, out var trace))
             {
@@ -1004,6 +1060,8 @@ internal static class TargetingState
         var defenseChecks = LearnDefenses(actor, target, knowledge,
             defenses ?? Enumerable.Empty<DefenseKind>(), knowledge.HasTargeted ? 10 : 0);
         LearnDamageResponse(actor, knowledge, knowledge.HasTargeted ? 10 : 0);
+        LearnHitPoints(actor, target, knowledge, knowledge.HasTargeted ? 10 : 0);
+        LearnConditions(actor, target, knowledge, afterAttack: false);
         ReportLearningAssessment(actor, target, knowledge, offense, defenseChecks);
         return knowledge;
     }
@@ -1190,6 +1248,41 @@ internal static class TargetingState
         knowledge.DamageResponseKnown = knowledge.ResponseCheck.Value.Success;
     }
 
+    private static void LearnHitPoints(UnitEntityData actor, UnitEntityData target, TargetKnowledge knowledge, int bonus)
+    {
+        if (!actor.Memory.ContainsVisible(target)) return;
+        if (!knowledge.HitPointsKnown && (!knowledge.HitPointsRolled || bonus != 0 && !knowledge.HitPointsRerollUsed))
+        {
+            knowledge.HitPointsRolled = true;
+            knowledge.HitPointsRerollUsed = bonus != 0;
+            knowledge.HitPointsCheck = RollKnowledge(Intelligence(actor) + bonus,
+                ArdubsEnemyIntelligenceMain.Settings.ActiveHitPointsMinimum,
+                ArdubsEnemyIntelligenceMain.Settings.ActiveHitPointsMaximum,
+                bonus == 0 ? "first assessment" : "after targeting");
+            knowledge.HitPointsKnown = knowledge.HitPointsCheck.Value.Success;
+        }
+        // Once recognized, track wounds/healing while visible, not just the
+        // initial snapshot. Unseen targets retain their last observed health.
+        if (!knowledge.HitPointsKnown) return;
+        knowledge.RemainingHitPoints = target.HPLeft;
+        knowledge.MaximumHitPoints = target.MaxHP;
+        if (knowledge.MaximumHitPoints <= 0)
+            throw new InvalidOperationException("Known target has non-positive maximum HP: " + UnitLabel(target));
+    }
+
+    private static void LearnConditions(UnitEntityData actor, UnitEntityData target,
+        TargetKnowledge knowledge, bool afterAttack)
+    {
+        if (!actor.Memory.ContainsVisible(target)) return;
+        var conditions = AttackAssessment.ObservableConditions(target);
+        if (!knowledge.Conditions.ShouldRoll(conditions, afterAttack)) return;
+        knowledge.ConditionCheck = RollKnowledge(Intelligence(actor) + (afterAttack ? 10 : 0),
+            ArdubsEnemyIntelligenceMain.Settings.ActiveConditionVulnerabilityMinimum,
+            ArdubsEnemyIntelligenceMain.Settings.ActiveConditionVulnerabilityMaximum,
+            afterAttack ? "after targeting" : "observing conditions");
+        knowledge.Conditions.Record(knowledge.ConditionCheck.Value.Success);
+    }
+
     private static void ReadCasterLevel(UnitEntityData target, TargetKnowledge knowledge)
     {
         knowledge.CasterLevel = OffensiveAssessment.HighestCasterLevel(target);
@@ -1257,9 +1350,13 @@ internal static class TargetingState
     {
         var responseCheck = knowledge.ResponseCheck;
         knowledge.ResponseCheck = null;
+        var conditionCheck = knowledge.ConditionCheck;
+        knowledge.ConditionCheck = null;
+        var hitPointsCheck = knowledge.HitPointsCheck;
+        knowledge.HitPointsCheck = null;
         var currentCheck = offense?.Strength ?? offense?.Caster ?? offense?.Attack ?? offense?.Damage ?? offense?.CasterLevel ??
             (offense?.Threats.Count > 0 ? (KnowledgeCheck?)offense.Threats.First().Value : null) ??
-            (defenseChecks?.Count > 0 ? (KnowledgeCheck?)defenseChecks.First().Value : null) ?? responseCheck;
+            (defenseChecks?.Count > 0 ? (KnowledgeCheck?)defenseChecks.First().Value : null) ?? responseCheck ?? conditionCheck ?? hitPointsCheck;
         if (!currentCheck.HasValue || !ArdubsEnemyIntelligenceMain.Settings.ShowLearningInLog || !ArdubsEnemyIntelligenceMain.Settings.AnyLogging)
         {
             return;
@@ -1290,8 +1387,13 @@ internal static class TargetingState
                 (entry.Value.Estimate == null ? "Unknown" : DescribeThreat(entry.Key, entry.Value.Estimate)) +
                 CheckSuffix(offense != null && offense.Threats.TryGetValue(entry.Key, out var threatCheck)
                     ? (KnowledgeCheck?)threatCheck : null))) +
-            $"\nDamage protection: {(knowledge.DamageResponseKnown ? "known; evaluated per proposed attack" : "Unknown")}" +
+            $"\nDamage/spell protection: {(knowledge.DamageResponseKnown ? "known; evaluated per proposed attack" : "Unknown")}" +
             CheckSuffix(responseCheck) +
+            $"\nRemaining HP: {(knowledge.HitPointsKnown ? $"{knowledge.RemainingHitPoints}/{knowledge.MaximumHitPoints}" : "Unknown")}" +
+            CheckSuffix(hitPointsCheck) +
+            (knowledge.Conditions.Conditions == VisibleDefenseCondition.None ? "" :
+                $"\nCondition vulnerability: {(knowledge.Conditions.Known ? "recognized" : "Unknown")}" +
+                $" [{knowledge.Conditions.Conditions}]" + CheckSuffix(conditionCheck)) +
             string.Concat(knowledge.Defenses.Select(entry =>
                 $"\n{AttackAssessment.Label(entry.Key)}: " +
                 (entry.Value.Known ? entry.Value.Value.ToString(CultureInfo.InvariantCulture) : "Unknown") +
@@ -1441,6 +1543,14 @@ internal static class TargetingState
         internal bool ResponseRolled;
         internal bool ResponseRerollUsed;
         internal KnowledgeCheck? ResponseCheck;
+        internal bool HitPointsKnown;
+        internal bool HitPointsRolled;
+        internal bool HitPointsRerollUsed;
+        internal int RemainingHitPoints;
+        internal int MaximumHitPoints;
+        internal KnowledgeCheck? HitPointsCheck;
+        internal readonly ConditionRecognitionMemory Conditions = new ConditionRecognitionMemory();
+        internal KnowledgeCheck? ConditionCheck;
         internal readonly Dictionary<string, DamageProtection.Result> Protection =
             new Dictionary<string, DamageProtection.Result>();
     }

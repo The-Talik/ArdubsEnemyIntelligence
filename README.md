@@ -44,22 +44,7 @@ There are no required gameplay-mod dependencies. I recommend playing my Ardub's 
   cramped encounters, mounts, large creatures, and unusual movement deserve
   particular caution.  I'm still tweaking this, so if you run into any issues with specific encounters, please let me know.
 
-## Troubleshooting
-
-For any bugs, include the mod version, relevant settings,
-steps to reproduce, and the relevant in-game or UMM log lines  If you are
-at a specific encounter, a save file would be helpful, too.
-
-For cursor stutters, enable **Profile cursor/pathfinding timings in UMM log**
-under Logging. It writes one summary about every ten seconds to the UMM log,
-not to the in-game combat log. Disable it again after comparing movement
-previews with the mod's footprint and body-blocking options on and off.
-
 ## License
 
 Ardub's Enemy Intelligence's original code and documentation are available
 under the [MIT License](LICENSE), copyright 2026 The-Talik.
-
-This license does not grant rights to Pathfinder: Wrath of the Righteous,
-Owlcat Games assets or trademarks, Unity Mod Manager, or other third-party
-material. Those remain subject to their respective owners and licenses. Blah blah blah.

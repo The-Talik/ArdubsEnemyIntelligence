@@ -14,6 +14,15 @@ internal enum DefenseKind
 
 internal static class SquishPolicy
 {
+    // A relative-health preference, not an absolute HP estimate of kill time.
+    // Full HP is neutral; approaching zero smoothly approaches 2. The abs term
+    // also handles conscious-at-negative-HP features without a clamp or pole.
+    internal static decimal HitPointsFactor(int remaining, int maximum)
+    {
+        if (maximum <= 0) throw new ArgumentOutOfRangeException(nameof(maximum), "Maximum HP must be positive.");
+        return 1m + (maximum - (decimal)remaining) / (maximum + Math.Abs((decimal)remaining));
+    }
+
     // Enumerate the die's outcomes, rather than clipping a calculated percentage.
     // These are ordinary saves: natural 1 fails and natural 20 succeeds.
     internal static decimal SaveFailureChance(int bonus, int difficultyClass)

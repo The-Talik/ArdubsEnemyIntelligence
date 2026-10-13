@@ -13,6 +13,7 @@
     <Compile Include="../ArdubsEnemyIntelligence/TargetScoreBreakdown.cs" Link="TargetScoreBreakdown.cs" />
     <Compile Include="../ArdubsEnemyIntelligence/DistancePolicy.cs" Link="DistancePolicy.cs" />
     <Compile Include="../ArdubsEnemyIntelligence/SquishPolicy.cs" Link="SquishPolicy.cs" />
+    <Compile Include="../ArdubsEnemyIntelligence/ConditionDefensePolicy.cs" Link="ConditionDefensePolicy.cs" />
     <Compile Include="../ArdubsEnemyIntelligence/RiskPolicy.cs" Link="RiskPolicy.cs" />
     <Compile Include="../ArdubsEnemyIntelligence/LogNumber.cs" Link="LogNumber.cs" />
     <Compile Include="../ArdubsEnemyIntelligence/LogPresentation.cs" Link="LogPresentation.cs" />

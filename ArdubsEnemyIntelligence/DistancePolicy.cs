@@ -86,15 +86,16 @@ internal readonly struct DistancePlan
 internal readonly struct AbilityDistancePlan
 {
     internal int WaitTurns { get; }
+    internal bool FiveFootStep { get; }
     internal decimal TimingFactor => 1m / (1m + 9m * WaitTurns);
     internal decimal RouteFactor { get; }
     internal decimal Factor => TimingFactor * RouteFactor;
 
     internal AbilityDistancePlan(decimal meters, decimal moveAndAct, decimal totalMove,
-        decimal futureMoveAndAct, decimal futureTotalMove, bool actionAvailableNow)
+        decimal futureMoveAndAct, decimal futureTotalMove, bool actionAvailableNow, decimal stepRange = 0m)
     {
         if (meters < 0m || moveAndAct < 0m || totalMove < 0m ||
-            futureMoveAndAct < 0m || futureTotalMove < 0m ||
+            futureMoveAndAct < 0m || futureTotalMove < 0m || stepRange < 0m ||
             meters > 0m && futureTotalMove == 0m)
             throw new ArgumentOutOfRangeException(nameof(meters), "Invalid ability-distance inputs.");
 
@@ -108,6 +109,9 @@ internal readonly struct AbilityDistancePlan
                 : 0;
             WaitTurns = checked(1 + extra);
         }
+        // Carry the movement mode used by the timing estimate into the selected
+        // command. An ordinary move would consume a full-round cast's action.
+        FiveFootStep = WaitTurns == 0 && meters > 0m && meters <= stepRange;
         RouteFactor = meters == 0m ? 1m :
             1m / (1m + 0.5m * meters / futureTotalMove);
     }

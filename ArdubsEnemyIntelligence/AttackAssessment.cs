@@ -7,6 +7,7 @@ using Kingmaker.Blueprints.Items.Weapons;
 using Kingmaker.EntitySystem.Entities;
 using Kingmaker.Items;
 using Kingmaker.RuleSystem;
+using Kingmaker.UnitLogic;
 using Kingmaker.UnitLogic.Abilities;
 using Kingmaker.UnitLogic.Abilities.Blueprints;
 using Kingmaker.UnitLogic.Abilities.Components;
@@ -26,10 +27,12 @@ internal sealed class AttackAssessment
     internal readonly bool HalfOnSave;
     internal readonly AbilityData? Ability;
     internal readonly ItemEntityWeapon? WeaponItem;
+    internal readonly AttackType? ArmorAttackType;
+    internal readonly bool DealsHitPointDamage;
 
     private AttackAssessment(string name, string key, DefenseKind? armor,
         DefenseKind? save = null, bool halfOnSave = false, AbilityData? ability = null,
-        ItemEntityWeapon? weapon = null)
+        ItemEntityWeapon? weapon = null, AttackType? attackType = null)
     {
         Name = name;
         EvidenceKey = key;
@@ -38,6 +41,10 @@ internal sealed class AttackAssessment
         HalfOnSave = halfOnSave;
         Ability = ability;
         WeaponItem = weapon;
+        ArmorAttackType = attackType;
+        var effectBlueprint = ability?.Blueprint.StickyTouch?.TouchDeliveryAbility ?? ability?.Blueprint;
+        DealsHitPointDamage = weapon != null || effectBlueprint?.ComponentsArray.OfType<AbilityEffectRunAction>()
+            .Any(effect => AbilityProtection.HasHitPointDamage(effect.Actions)) == true;
     }
 
     internal static bool IsScoredAction(AiAction action, DecisionContext context) =>
@@ -71,7 +78,8 @@ internal sealed class AttackAssessment
 
     internal static AttackAssessment Weapon(ItemEntityWeapon weapon) =>
         new AttackAssessment(weapon.Name + " (" + weapon.Blueprint.AttackType + ")",
-            WeaponKey(weapon), ArmorKind(weapon.Blueprint), weapon: weapon);
+            WeaponKey(weapon), ArmorKind(weapon.Blueprint), weapon: weapon,
+            attackType: weapon.Blueprint.AttackType);
 
     internal static string WeaponKey(ItemEntityWeapon weapon) =>
         "weapon:" + weapon.Blueprint.AssetGuid + ":" + weapon.Blueprint.AttackType + ":" +
@@ -80,6 +88,9 @@ internal sealed class AttackAssessment
 
     internal static string SpellKey(BlueprintAbility blueprint) =>
         "ability:" + (blueprint.StickyTouch?.TouchDeliveryAbility ?? blueprint).AssetGuid;
+
+    internal static BlueprintAbility? SourceSpell(RuleReason? reason) =>
+        reason?.Ability?.Blueprint ?? reason?.Context?.SourceAbility;
 
     internal static AttackAssessment Spell(AbilityData ability)
     {
@@ -96,7 +107,9 @@ internal sealed class AttackAssessment
         // Do not guess the semantics of arbitrary nested conditions/effects.
         var half = actions != null && actions.Length > 0 &&
             actions.All(value => value is ContextActionDealDamage damage && damage.HalfIfSaved);
-        return new AttackAssessment(ability.Name, SpellKey(ability.Blueprint), armor, saveKind, half, ability);
+        return new AttackAssessment(ability.Name, SpellKey(ability.Blueprint), armor, saveKind, half, ability,
+            attackType: touch?.TouchWeapon?.AttackType ??
+                (projectile?.NeedAttackRoll == true ? projectile.Weapon?.AttackType : null));
     }
 
     private static DefenseKind ArmorKind(BlueprintItemWeapon weapon) =>
@@ -105,6 +118,28 @@ internal sealed class AttackAssessment
 
     internal static string Label(DefenseKind kind) => kind == DefenseKind.ArmorClass ? "AC" :
         kind == DefenseKind.TouchArmorClass ? "Touch AC" : kind.ToString();
+
+    internal static VisibleDefenseCondition ObservableConditions(UnitEntityData target)
+    {
+        var state = target.State;
+        var conditions = VisibleDefenseCondition.None;
+        if (state.HasCondition(UnitCondition.Paralyzed)) conditions |= VisibleDefenseCondition.Paralyzed;
+        if (state.HasCondition(UnitCondition.Petrified)) conditions |= VisibleDefenseCondition.Petrified;
+        if (state.IsHelpless) conditions |= VisibleDefenseCondition.Helpless;
+        if (state.HasCondition(UnitCondition.Stunned)) conditions |= VisibleDefenseCondition.Stunned;
+        if (state.Prone.Active || target.View?.IsGetUp == true) conditions |= VisibleDefenseCondition.Prone;
+        return conditions;
+    }
+
+    internal int ConditionArmorAdjustment(UnitEntityData target, VisibleDefenseCondition conditions)
+    {
+        if (!ArmorDefense.HasValue || !ArmorAttackType.HasValue || conditions == VisibleDefenseCondition.None)
+            return 0;
+        var armor = target.Stats.AC;
+        var touch = ArmorDefense.Value == DefenseKind.TouchArmorClass;
+        return ConditionDefensePolicy.ArmorAdjustment(touch ? armor.Touch : armor.ModifiedValue,
+            touch ? armor.FlatFootedTouch : armor.FlatFooted, conditions, ArmorAttackType.Value.IsMelee());
+    }
 
     internal static int ReadDefense(UnitEntityData target, DefenseKind kind) => kind switch
     {

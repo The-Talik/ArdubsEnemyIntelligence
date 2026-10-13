@@ -59,6 +59,12 @@ public sealed class Settings : UnityModManager.ModSettings
     public bool DefaultSavingThrowRange = true;
     public int SavingThrowMinimum = 10;
     public int SavingThrowMaximum = 25;
+    public bool DefaultConditionVulnerabilityRange = true;
+    public int ConditionVulnerabilityMinimum = 5;
+    public int ConditionVulnerabilityMaximum = 15;
+    public bool DefaultHitPointsRange = true;
+    public int HitPointsMinimum = 5;
+    public int HitPointsMaximum = 15;
     public bool DefaultSneakRange = true;
     public int SneakMinimum = 10;
     public int SneakMaximum = 25;
@@ -103,6 +109,10 @@ public sealed class Settings : UnityModManager.ModSettings
     public float SquishImportance = 1f;
     private string? squishImportanceText;
     internal decimal ActiveSquishImportance => DefaultSquishImportance ? 1m : ScoringWeights.Read(SquishImportance);
+    public bool DefaultHitPointsImportance = true;
+    public float HitPointsImportance = 1f;
+    private string? hitPointsImportanceText;
+    internal decimal ActiveHitPointsImportance => DefaultHitPointsImportance ? 1m : ScoringWeights.Read(HitPointsImportance);
     public bool DefaultDistanceImportance = true;
     public float DistanceImportance = 1f;
     private string? distanceImportanceText;
@@ -126,6 +136,10 @@ public sealed class Settings : UnityModManager.ModSettings
     private string? touchArmorClassMaximumText;
     private string? savingThrowMinimumText;
     private string? savingThrowMaximumText;
+    private string? conditionVulnerabilityMinimumText;
+    private string? conditionVulnerabilityMaximumText;
+    private string? hitPointsMinimumText;
+    private string? hitPointsMaximumText;
     private string? sneakMinimumText;
     private string? sneakMaximumText;
     private string? extraDamageMinimumText;
@@ -155,6 +169,10 @@ public sealed class Settings : UnityModManager.ModSettings
     };
     internal int ActiveDamageResponseMinimum => DefaultDamageResponseRange ? 10 : DamageResponseMinimum;
     internal int ActiveDamageResponseMaximum => DefaultDamageResponseRange ? 25 : DamageResponseMaximum;
+    internal int ActiveConditionVulnerabilityMinimum => DefaultConditionVulnerabilityRange ? 5 : ConditionVulnerabilityMinimum;
+    internal int ActiveConditionVulnerabilityMaximum => DefaultConditionVulnerabilityRange ? 15 : ConditionVulnerabilityMaximum;
+    internal int ActiveHitPointsMinimum => DefaultHitPointsRange ? 5 : HitPointsMinimum;
+    internal int ActiveHitPointsMaximum => DefaultHitPointsRange ? 15 : HitPointsMaximum;
     internal bool ModEnabled => ApplyToEnemies || ApplyToAlliedNpcs;
     internal bool BodyBlockingEnabled => ModEnabled && EnableBodyBlocking;
     internal bool AnyLogging => ModEnabled && (InGameLogging || UmmLogging);
@@ -222,7 +240,7 @@ public sealed class Settings : UnityModManager.ModSettings
                     "This option only affects enemy AI. Unreachable or unseen awake combat opponents still count. Enemy AI can target sleepers once all other opponents are dead or incapacitated. Enabled allied NPCs never directly target sleepers, even with this option off. Player commands are unchanged."));
             GUILayout.Space(8);
             DrawSubheading("Learning");
-            DrawDescription("0% at or below Min Intelligence; 100% at or above Max Intelligence.");
+            DrawDescription("Values are Intelligence scores: 0% chance at or below the 0% value; 100% chance at or above the 100% value.");
             DrawIntelligenceOptions();
             GUILayout.Space(8);
             DrawSubheading("Attack Preferences");
@@ -361,6 +379,8 @@ public sealed class Settings : UnityModManager.ModSettings
             ref RiskImportance, ref riskImportanceText);
         DrawWeight("Squish importance", "Higher favors easier-to-damage targets more strongly; 0 removes this preference.", ref DefaultSquishImportance,
             ref SquishImportance, ref squishImportanceText);
+        DrawWeight("Remaining HP importance", "Favors wounded targets for HP-damaging attacks. Full HP is neutral; half HP gives 1.33 before weighting. 0 disables this preference. Control/drain-only abilities are unchanged.", ref DefaultHitPointsImportance,
+            ref HitPointsImportance, ref hitPointsImportanceText);
         DrawWeight("Distance importance", "Higher penalizes movement, delays and opportunity risk more strongly; 0 removes this preference.", ref DefaultDistanceImportance,
             ref DistanceImportance, ref distanceImportanceText);
         DrawDescription("Importance uses powers around neutral 1. Impossible/zero scores remain zero. Type a larger value to extend a slider.");
@@ -392,7 +412,7 @@ public sealed class Settings : UnityModManager.ModSettings
         DrawRange("Attack frequency & criticals", 8, 22, ref DefaultRoutineRange,
             ref RoutineMinimum, ref RoutineMaximum,
             ref routineMinimumText, ref routineMaximumText);
-        DrawRange("Damage resistance/immunity knowledge", 10, 25, ref DefaultDamageResponseRange,
+        DrawRange("Damage/spell immunity knowledge", 10, 25, ref DefaultDamageResponseRange,
             ref DamageResponseMinimum, ref DamageResponseMaximum,
             ref damageResponseMinimumText, ref damageResponseMaximumText);
         DrawRange("Caster recognition", 5, 16, ref DefaultCasterRange,
@@ -410,6 +430,12 @@ public sealed class Settings : UnityModManager.ModSettings
         DrawRange("Saving throw knowledge", 10, 25, ref DefaultSavingThrowRange,
             ref SavingThrowMinimum, ref SavingThrowMaximum,
             ref savingThrowMinimumText, ref savingThrowMaximumText);
+        DrawRange("Condition vulnerability knowledge", 5, 15, ref DefaultConditionVulnerabilityRange,
+            ref ConditionVulnerabilityMinimum, ref ConditionVulnerabilityMaximum,
+            ref conditionVulnerabilityMinimumText, ref conditionVulnerabilityMaximumText);
+        DrawRange("Remaining HP knowledge", 5, 15, ref DefaultHitPointsRange,
+            ref HitPointsMinimum, ref HitPointsMaximum,
+            ref hitPointsMinimumText, ref hitPointsMaximumText);
     }
 
     internal enum PathfindingPreset { Wotr, Reset, Pnp }
@@ -430,8 +456,10 @@ public sealed class Settings : UnityModManager.ModSettings
         EnableBodyBlocking = !vanilla;
         BlockHostilePassage = !vanilla;
         AllowAlliedPassage = true; // Inverted UI checkbox: unchecked.
-        IgnoreFriendlyBlockingOnFiveFootStep = !vanilla && !pnp;
-        AllowFriendlyStoppingOverlap = false;
+        // Keep permissive friendly-space choices checked for WotR Defaults,
+        // even though body blocking is disabled and these overrides are inactive.
+        IgnoreFriendlyBlockingOnFiveFootStep = !pnp;
+        AllowFriendlyStoppingOverlap = vanilla;
         AllowFlyingEnemyPassage = !vanilla && !pnp;
         IgnoreDownedUnitSpace = !vanilla;
         PreventStoppingOverlap = !vanilla;
@@ -457,6 +485,7 @@ public sealed class Settings : UnityModManager.ModSettings
         ValidateWeight("Stat damage / drain threat", ref DefaultStatDrainThreatMultiplier, ref StatDrainThreatMultiplier, modEntry);
         ValidateWeight("Risk importance", ref DefaultRiskImportance, ref RiskImportance, modEntry);
         ValidateWeight("Squish importance", ref DefaultSquishImportance, ref SquishImportance, modEntry);
+        ValidateWeight("Remaining HP importance", ref DefaultHitPointsImportance, ref HitPointsImportance, modEntry);
         ValidateWeight("Distance importance", ref DefaultDistanceImportance, ref DistanceImportance, modEntry);
         ValidateRange("Reassessment chance", ref DefaultReassessmentRange, ReassessmentMinimum,
             ReassessmentMaximum, modEntry);
@@ -474,7 +503,7 @@ public sealed class Settings : UnityModManager.ModSettings
             StatDrainMaximum, modEntry);
         ValidateRange("Attack frequency & criticals", ref DefaultRoutineRange, RoutineMinimum,
             RoutineMaximum, modEntry);
-        ValidateRange("Damage resistance/immunity knowledge", ref DefaultDamageResponseRange, DamageResponseMinimum,
+        ValidateRange("Damage/spell immunity knowledge", ref DefaultDamageResponseRange, DamageResponseMinimum,
             DamageResponseMaximum, modEntry);
         ValidateRange("Caster recognition", ref DefaultCasterRange, CasterMinimum,
             CasterMaximum, modEntry);
@@ -486,6 +515,10 @@ public sealed class Settings : UnityModManager.ModSettings
             TouchArmorClassMaximum, modEntry);
         ValidateRange("Saving throw knowledge", ref DefaultSavingThrowRange, SavingThrowMinimum,
             SavingThrowMaximum, modEntry);
+        ValidateRange("Condition vulnerability knowledge", ref DefaultConditionVulnerabilityRange,
+            ConditionVulnerabilityMinimum, ConditionVulnerabilityMaximum, modEntry);
+        ValidateRange("Remaining HP knowledge", ref DefaultHitPointsRange, HitPointsMinimum,
+            HitPointsMaximum, modEntry);
     }
 
     private static void ValidateRange(string name, ref bool useDefault, int minimum,
@@ -510,7 +543,7 @@ public sealed class Settings : UnityModManager.ModSettings
         useDefault = GUILayout.Toggle(useDefault, "Default", toggleStyle,
             GUILayout.Width(ControlWidth(toggleStyle, "Default")));
         GUILayout.Space(8);
-        GUILayout.Label("Min", labelStyle, GUILayout.Width(ControlWidth(labelStyle, "Min")));
+        GUILayout.Label("0%", labelStyle, GUILayout.Width(ControlWidth(labelStyle, "0%")));
         GUILayout.Space(4);
         var wasEnabled = GUI.enabled;
         string enteredMinimumText;
@@ -524,7 +557,7 @@ public sealed class Settings : UnityModManager.ModSettings
                 GUILayout.Width(InputWidth(minimumText ?? minimum.ToString(CultureInfo.InvariantCulture))));
             GUI.enabled = wasEnabled;
             GUILayout.Space(8);
-            GUILayout.Label("Max", labelStyle, GUILayout.Width(ControlWidth(labelStyle, "Max")));
+            GUILayout.Label("100%", labelStyle, GUILayout.Width(ControlWidth(labelStyle, "100%")));
             GUILayout.Space(4);
             GUI.enabled = wasEnabled && !useDefault;
             enteredMaximumText = GUILayout.TextField(useDefault
@@ -553,7 +586,7 @@ public sealed class Settings : UnityModManager.ModSettings
         }
         else
         {
-            DrawDescription("Enter whole numbers with Min < Max (previous valid range remains active).");
+            DrawDescription("Enter whole Intelligence scores with the 0% value below the 100% value (previous valid range remains active).");
         }
     }
 

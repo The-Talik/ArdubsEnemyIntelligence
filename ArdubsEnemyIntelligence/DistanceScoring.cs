@@ -134,15 +134,16 @@ internal static class DistanceScoring
         var futureMoveAndAct = fullRound ? (decimal)TurnController.MetersOfFiveFootStep : standard || move
             ? (fullMovementNextTurn ? (decimal)speed * 3m : 0m) : futureTotal;
         var plan = new AbilityDistancePlan(meters, moveAndAct, totalRange,
-            futureMoveAndAct, futureTotal, actionAvailable);
+            futureMoveAndAct, futureTotal, actionAvailable, stepRange);
         var factor = gameFactor * plan.Factor;
         var description = $"Ability path[game factor {LogNumber.Format(gameFactor)}] * " +
             $"Timing[{(fullRound ? "full-round" : actionType.ToString().ToLowerInvariant())}; " +
             $"act now {(plan.WaitTurns == 0 ? "yes" : "no")}; wait {plan.WaitTurns} => " +
             $"{LogNumber.Format(plan.TimingFactor)}] * " +
             $"Route[{LogNumber.Format(meters)}m; move + act {LogNumber.Format(moveAndAct)}m; " +
-            $"total move {LogNumber.Format(totalRange)}m => {LogNumber.Format(plan.RouteFactor)}]";
-        return new Result(factor, description);
+            $"total move {LogNumber.Format(totalRange)}m; 5ft step {(plan.FiveFootStep ? "yes" : "no")} => " +
+            $"{LogNumber.Format(plan.RouteFactor)}]";
+        return new Result(factor, description, plan.FiveFootStep);
     }
 
     internal static Result Evaluate(DecisionContext context, Route route,

@@ -171,6 +171,38 @@ internal static class GameMetadataTests
             Set(target, "m_Group", enemyGroup);
             if (Eligible()) throw new Exception("Remembering a former opponent must not override current allegiance.");
             Set(target, "m_Group", partyGroup);
+            var statsType = game.GetType("Kingmaker.EntitySystem.Stats.CharacterStats");
+            var actorStats = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(statsType);
+            var targetStats = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(statsType);
+            var intelligence = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(statsType.GetField("Intelligence", Flags).FieldType);
+            Set(intelligence, "<ModifiedValue>k__BackingField", 5); Set(actorStats, "Intelligence", intelligence);
+            Set(Property(actor, "Descriptor"), "Stats", actorStats);
+            var hitPoints = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(statsType.GetField("HitPoints", Flags).FieldType);
+            Set(hitPoints, "<ModifiedValue>k__BackingField", 100); Set(targetStats, "HitPoints", hitPoints);
+            var targetDescriptor = Property(target, "Descriptor");
+            Set(targetDescriptor, "Stats", targetStats); Set(targetDescriptor, "m_Damage", 50);
+            var health = Activator.CreateInstance(targeting.GetNestedType("TargetKnowledge", Flags), true);
+            var learnHealth = targeting.GetMethod("LearnHitPoints", Flags);
+            learnHealth.Invoke(null, new object[] { actor, target, health, 0 });
+            if ((bool)Field(health, "HitPointsRolled")) throw new Exception("Unseen targets must not roll or reveal health.");
+            Set(info, "Visible", true);
+            learnHealth.Invoke(null, new object[] { actor, target, health, 0 });
+            if ((bool)Field(health, "HitPointsKnown") || !(bool)Field(health, "HitPointsRolled"))
+                throw new Exception("An Int 5 first assessment must fail the default HP knowledge gate.");
+            learnHealth.Invoke(null, new object[] { actor, target, health, 10 });
+            if (!(bool)Field(health, "HitPointsKnown") || !(bool)Field(health, "HitPointsRerollUsed"))
+                throw new Exception("A +10 Int defensive retry must learn visible health at effective Int 15.");
+            Equal(50m, Field(health, "RemainingHitPoints"), "learned HP reads native remaining health");
+            Equal(100m, Field(health, "MaximumHitPoints"), "learned HP reads native maximum health");
+            Set(targetDescriptor, "m_Damage", 15);
+            learnHealth.Invoke(null, new object[] { actor, target, health, 0 });
+            Equal(85m, Field(health, "RemainingHitPoints"), "known HP refreshes after visible healing");
+            Set(info, "Visible", false); Set(targetDescriptor, "m_Damage", 95);
+            learnHealth.Invoke(null, new object[] { actor, target, health, 0 });
+            Equal(85m, Field(health, "RemainingHitPoints"), "unseen damage must not reveal hidden current HP");
+            Set(info, "Visible", true);
+            learnHealth.Invoke(null, new object[] { actor, target, health, 0 });
+            Equal(5m, Field(health, "RemainingHitPoints"), "known HP refreshes when target becomes visible again");
             entries.Clear();
             if (Eligible()) throw new Exception("An expired/removed native memory must stop granting awareness.");
         }
@@ -1108,6 +1140,263 @@ internal static class GameMetadataTests
         finally { current.SetValue(null, previous); }
     }
 
+    private static void ConditionDefenseTests()
+    {
+        var targeting = mod.GetType("ArdubsEnemyIntelligence.TargetingState", true);
+        var assessment = mod.GetType("ArdubsEnemyIntelligence.AttackAssessment", true);
+        var conditionType = mod.GetType("ArdubsEnemyIntelligence.VisibleDefenseCondition", true);
+        var defenseType = mod.GetType("ArdubsEnemyIntelligence.DefenseKind", true);
+        var attackType = game.GetType("Kingmaker.RuleSystem.AttackType", true);
+        var target = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(game.GetType("Kingmaker.EntitySystem.Entities.UnitEntityData"));
+        var descriptor = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(game.GetType("Kingmaker.UnitLogic.UnitDescriptor"));
+        var stats = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(game.GetType("Kingmaker.EntitySystem.Stats.CharacterStats"));
+        var armor = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(game.GetType("Kingmaker.EntitySystem.Stats.ModifiableValueArmorClass"));
+        Set(armor, "<ModifiedValue>k__BackingField", 51);
+        Set(armor, "<FlatFooted>k__BackingField", 31);
+        Set(armor, "<Touch>k__BackingField", 36);
+        Set(armor, "<FlatFootedTouch>k__BackingField", 16);
+        Set(stats, "AC", armor); Set(descriptor, "Stats", stats); Set(target, "<Descriptor>k__BackingField", descriptor);
+        var profile = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(assessment);
+        var conditions = Enum.Parse(conditionType, "Paralyzed, Helpless");
+        var readAdjustment = assessment.GetMethod("ConditionArmorAdjustment", Flags);
+        Set(profile, "ArmorDefense", Enum.Parse(defenseType, "ArmorClass"));
+        Set(profile, "ArmorAttackType", Enum.Parse(attackType, "Melee"));
+        Equal(-24m, readAdjustment.Invoke(profile, new[] { target, conditions }), "melee condition adapter reads native normal/flat-footed AC");
+        Set(profile, "ArmorAttackType", Enum.Parse(attackType, "Ranged"));
+        Equal(-20m, readAdjustment.Invoke(profile, new[] { target, conditions }), "ranged condition adapter omits helpless melee penalty");
+        Set(profile, "ArmorDefense", Enum.Parse(defenseType, "TouchArmorClass"));
+        Set(profile, "ArmorAttackType", Enum.Parse(attackType, "Touch"));
+        Equal(-24m, readAdjustment.Invoke(profile, new[] { target, conditions }), "touch condition adapter uses flat-footed touch AC");
+        Set(profile, "ArmorAttackType", Enum.Parse(attackType, "RangedTouch"));
+        Equal(-20m, readAdjustment.Invoke(profile, new[] { target, conditions }), "ranged touch retains ranged condition rules");
+        Set(profile, "ArmorDefense", null); Set(profile, "ArmorAttackType", null);
+        Equal(0m, readAdjustment.Invoke(profile, new[] { target, conditions }), "saving-throw spell gets no AC condition adjustment");
+        foreach (var method in new[] { "ObservableConditions", "ConditionArmorAdjustment" })
+            foreach (var call in Calls(assessment.GetMethod(method, Flags)))
+                if (call.DeclaringType.FullName == "Kingmaker.RuleSystem.Rulebook" || call.Name == "set_ModifiedValue")
+                    throw new Exception("Condition assessment must not fire rulebook events or mutate stats.");
+        var learnCalls = Calls(targeting.GetMethod("LearnConditions", Flags)).Select(call => call.Name).ToArray();
+        if (!learnCalls.Contains("ContainsVisible") || !learnCalls.Contains("RollKnowledge") || !learnCalls.Contains("ShouldRoll"))
+            throw new Exception("Condition recognition must require visibility, an Int roll and cached knowledge.");
+        var squishCalls = Calls(targeting.GetMethod("EvaluateSquish", Flags)).Select(call => call.Name).ToArray();
+        if (!squishCalls.Contains("ContainsVisible") || !squishCalls.Contains("ConditionArmorAdjustment") || !squishCalls.Contains("AssessedArmor"))
+            throw new Exception("Squish must use current visible condition adjustments without bypassing AC knowledge.");
+        foreach (var method in new[] { "GetKnowledge", "ObserveCommand" })
+            if (!Calls(targeting.GetMethod(method, Flags)).Any(call => call.Name == "LearnConditions"))
+                throw new Exception(method + " must reach condition learning.");
+        var nativeCalls = Calls(game.GetType("Kingmaker.RuleSystem.Rules.RuleCalculateAC").GetMethod("OnTrigger", Flags)).Select(call => call.Name).ToArray();
+        foreach (var name in new[] { "get_FlatFooted", "get_FlatFootedTouch", "get_IsHelpless", "IsMelee" })
+            if (!nativeCalls.Contains(name)) throw new Exception("Native condition AC contract changed: " + name);
+    }
+
+    private static bool FireImmunityProbe<T>(T energy) => energy.ToString() == "Fire";
+
+    private static void AbilityFixTests()
+    {
+        var targeting = mod.GetType("ArdubsEnemyIntelligence.TargetingState");
+        var context = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(game.GetType("Kingmaker.AI.DecisionContext"));
+        var resultType = mod.GetType("ArdubsEnemyIntelligence.DistanceScoring+Result");
+        var applyMode = targeting.GetMethod("ApplyMovementMode", Flags);
+        Func<decimal, bool, object> result = (factor, step) => Activator.CreateInstance(resultType, Flags,
+            null, new object[] { factor, "test", step, 0 }, null);
+        applyMode.Invoke(null, new[] { context, result(1m, true) });
+        if (!(bool)Field(context, "CurrentEnableFiveFootStep"))
+            throw new Exception("Ability step choice must reach the native command movement-mode field.");
+        applyMode.Invoke(null, new[] { context, result(1m, false) });
+        if ((bool)Field(context, "CurrentEnableFiveFootStep"))
+            throw new Exception("A longer/in-range cast must clear the previous candidate's step choice.");
+        applyMode.Invoke(null, new[] { context, result(0m, true) });
+        if ((bool)Field(context, "CurrentEnableFiveFootStep"))
+            throw new Exception("Rejected ability routes must not retain a step choice.");
+        if (Calls(targeting.GetMethod("FinishPathScore", Flags)).Count(call => call.Name == "ApplyMovementMode") != 3)
+            throw new Exception("Ability, rejected ability, and weapon branches must all apply their own movement mode.");
+        if (!Calls(mod.GetType("ArdubsEnemyIntelligence.DistanceScoring").GetMethod("EvaluateAbility", Flags))
+            .Any(call => call.Name == "get_FiveFootStep"))
+            throw new Exception("Ability timing discarded its planned step mode.");
+
+        var protection = mod.GetType("ArdubsEnemyIntelligence.AbilityProtection");
+        var componentType = game.GetType("Kingmaker.Blueprints.BlueprintComponent");
+        Func<object[], Array> components = values =>
+        {
+            var array = Array.CreateInstance(componentType, values.Length);
+            for (var i = 0; i < values.Length; i++) array.SetValue(values[i], i);
+            return array;
+        };
+        Func<object, object[], object> assess = (actions, facts) => protection.GetMethod("EvaluateEffects", Flags)
+            .Invoke(null, new object[] { actions, components(facts), null, null });
+        var drainImmunity = New("Kingmaker.UnitLogic.FactLogic.AddImmunityToEnergyDrain");
+        var drain = Damage("EnergyDrain", 0, "Zero", 1);
+        Equal(0m, Field(assess(Actions(drain), new[] { drainImmunity }), "Factor"), "known immunity rejects pure drain spell");
+        Equal(1m, Field(assess(Actions(drain), new object[0]), "Factor"), "unprotected target remains eligible for drain");
+        SetEnum(Field(Field(drain, "Value"), "BonusValue"), "ValueType", "Shared");
+        Equal(0m, Field(assess(Actions(drain), new[] { drainImmunity }), "Factor"), "drain immunity needs no spell ranks or execution");
+        var saved = New("Kingmaker.UnitLogic.Mechanics.Actions.ContextActionConditionalSaved");
+        Set(saved, "Succeed", Actions()); Set(saved, "Failed", Actions(drain));
+        var save = New("Kingmaker.UnitLogic.Mechanics.Actions.ContextActionSavingThrow");
+        Set(save, "Actions", Actions(saved));
+        Equal(0m, Field(assess(Actions(save), new[] { drainImmunity }), "Factor"), "save-wrapped drain is recognized without rolling a save");
+        Equal(0m, Field(assess(Actions(drain, New("Kingmaker.UnitLogic.Mechanics.Actions.ContextActionSpawnFx")),
+            new[] { drainImmunity }), "Factor"), "visual effect must not make a blocked spell useful");
+        var hp = Damage("Damage", 1, "D6");
+        var damageType = New("Kingmaker.RuleSystem.Rules.Damage.DamageTypeDescription");
+        SetEnum(damageType, "Type", "Physical"); Set(hp, "DamageType", damageType);
+        Equal(1m, Field(assess(Actions(drain, hp), new[] { drainImmunity }), "Factor"), "mixed spell with useful HP damage remains eligible");
+        var branch = New("Kingmaker.Designers.EventConditionActionSystem.Actions.Conditional");
+        Set(branch, "IfTrue", Actions(drain)); Set(branch, "IfFalse", Actions(hp));
+        Equal(1m, Field(assess(Actions(branch), new[] { drainImmunity }), "Factor"), "do not guess target-dependent alternatives");
+        var control = New("Kingmaker.UnitLogic.Mechanics.Actions.ContextActionApplyBuff");
+        Equal(1m, Field(assess(Actions(drain, control), new[] { drainImmunity }), "Factor"), "unmodeled control prevents total-immunity claim");
+        Equal(1m, Field(assess(Actions(control), new[] { drainImmunity }), "Factor"), "Dominate is not rejected by drain immunity");
+        var statImmunity = New("Kingmaker.UnitLogic.FactLogic.AddImmunityToAbilityScoreDamage");
+        var statTypes = Array.CreateInstance(game.GetType("Kingmaker.EntitySystem.Stats.StatType"), 1);
+        statTypes.SetValue(Enum.Parse(statTypes.GetType().GetElementType(), "Strength"), 0);
+        Set(statImmunity, "StatTypes", statTypes); Set(statImmunity, "Drain", false);
+        Equal(0m, Field(assess(Actions(Damage("AbilityDamage", 1, "D6")), new[] { statImmunity }), "Factor"), "stat spell respects matching immunity");
+        Equal(1m, Field(assess(Actions(Damage("AbilityDamage", 1, "D6", drain: true)), new[] { statImmunity }), "Factor"), "damage-only immunity does not block drain");
+        Set(statImmunity, "UseIgnoreRule", true);
+        Equal(1m, Field(assess(Actions(Damage("AbilityDamage", 1, "D6")), new[] { statImmunity }), "Factor"), "conditional immunity is not executed");
+        SetEnum(damageType, "Type", "Energy"); SetEnum(damageType, "Energy", "Fire");
+        var energyType = FindField(damageType, "Energy").FieldType;
+        var energyProbe = Delegate.CreateDelegate(typeof(Func<,>).MakeGenericType(energyType, typeof(bool)),
+            typeof(GameMetadataTests).GetMethod("FireImmunityProbe", Flags).MakeGenericMethod(energyType));
+        Equal(0m, Field(protection.GetMethod("EvaluateEffects", Flags).Invoke(null,
+            new object[] { Actions(hp), components(new object[0]), energyProbe, null }), "Factor"), "elemental spell uses energy immunity lookup");
+        SetEnum(damageType, "Energy", "Cold");
+        Equal(1m, Field(protection.GetMethod("EvaluateEffects", Flags).Invoke(null,
+            new object[] { Actions(hp), components(new object[0]), energyProbe, null }), "Factor"), "different energy type is not rejected");
+
+        var assessment = mod.GetType("ArdubsEnemyIntelligence.AttackAssessment");
+        var blueprint = New("Kingmaker.UnitLogic.Abilities.Blueprints.BlueprintAbility");
+        var ability = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(game.GetType("Kingmaker.UnitLogic.Abilities.AbilityData"));
+        Set(ability, "Blueprint", blueprint);
+        var reason = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(game.GetType("Kingmaker.RuleSystem.RuleReason"));
+        Set(reason, "<Ability>k__BackingField", ability);
+        if (!ReferenceEquals(blueprint, assessment.GetMethod("SourceSpell", Flags).Invoke(null, new[] { reason })))
+            throw new Exception("Non-HP spell events must resolve their ability, not just a touch weapon.");
+        if (!Calls(targeting.GetMethod("ObserveNonHp", Flags)).Any(call => call.Name == "SpellKey"))
+            throw new Exception("Drain/stat immunity evidence must be recorded against its ability.");
+        if (!Calls(targeting.GetMethod("EvaluateSquish", Flags)).Any(call => call.DeclaringType == protection && call.Name == "Evaluate"))
+            throw new Exception("Spell protection must participate in candidate scoring.");
+        foreach (var method in protection.GetMethods(Flags).Concat(protection.GetNestedType("Assessment", Flags).GetMethods(Flags)))
+            if (method.DeclaringType == protection || method.DeclaringType.Name == "Assessment")
+                foreach (var call in Calls(method))
+                    if (call.DeclaringType.FullName == "Kingmaker.RuleSystem.Rulebook" || call.Name == "RunAction" || call.Name == "CheckCondition")
+                        throw new Exception("Spell protection must not execute rules/actions/conditions.");
+    }
+
+    private static object protectionProbeBuff;
+    private static object protectionProbeFact;
+    private static bool BuffImmunityProbe<T>(T buff) => ReferenceEquals(buff, protectionProbeBuff);
+    private static bool CasterFactProbe<T>(T fact) => ReferenceEquals(fact, protectionProbeFact);
+
+    private static void MindProtectionTests()
+    {
+        var protection = mod.GetType("ArdubsEnemyIntelligence.AbilityProtection", true);
+        var componentType = game.GetType("Kingmaker.Blueprints.BlueprintComponent");
+        Array Components(params object[] values)
+        {
+            var array = Array.CreateInstance(componentType, values.Length);
+            for (var i = 0; i < values.Length; i++) array.SetValue(values[i], i);
+            return array;
+        }
+        object Reference(string type, object blueprint)
+        {
+            var reference = New(type); Set(reference, "<Cached>k__BackingField", blueprint); return reference;
+        }
+        var descriptorType = game.GetType("Kingmaker.Blueprints.Classes.Spells.SpellDescriptor");
+        var alignmentType = game.GetType("Kingmaker.Enums.Alignment");
+        object Descriptor(string flags) => Enum.Parse(descriptorType, flags);
+        object Wrapper(string flags)
+        {
+            var wrapper = New("Kingmaker.Blueprints.Classes.Spells.SpellDescriptorWrapper");
+            Set(wrapper, "m_IntValue", Convert.ToInt64(Descriptor(flags))); return wrapper;
+        }
+        var buff = New("Kingmaker.UnitLogic.Buffs.Blueprints.BlueprintBuff");
+        var descriptorComponent = New("Kingmaker.Blueprints.Classes.Spells.SpellDescriptorComponent");
+        Set(descriptorComponent, "Descriptor", Wrapper("MindAffecting, Compulsion"));
+        Set(buff, "Components", Components(descriptorComponent));
+        var specific = New("Kingmaker.UnitLogic.FactLogic.SpecificBuffImmunity");
+        Set(specific, "m_Buff", Reference("Kingmaker.Blueprints.BlueprintBuffReference", buff));
+        SetEnum(specific, "Alignment", "Evil");
+        var factType = game.GetType("Kingmaker.Blueprints.Facts.BlueprintUnitFact");
+        var factProbe = Delegate.CreateDelegate(typeof(Func<,>).MakeGenericType(factType, typeof(bool)),
+            typeof(GameMetadataTests).GetMethod("CasterFactProbe", Flags).MakeGenericMethod(factType));
+        bool Immune(object[] facts, string alignment = "ChaoticEvil", bool mythic = false) =>
+            (bool)protection.GetMethod("IsBuffImmune", Flags).Invoke(null, new object[] { buff, Components(facts),
+                Descriptor("MindAffecting, Compulsion"), Enum.Parse(alignmentType, alignment), factProbe, mythic });
+        if (!Immune(new[] { specific })) throw new Exception("Protection from Evil must block an evil caster's domination buff.");
+        if (Immune(new[] { specific }, "LawfulGood")) throw new Exception("Alignment-specific immunity must not block unrelated casters.");
+        var different = New("Kingmaker.UnitLogic.Buffs.Blueprints.BlueprintBuff");
+        Set(specific, "m_Buff", Reference("Kingmaker.Blueprints.BlueprintBuffReference", different));
+        if (Immune(new[] { specific })) throw new Exception("Specific buff immunity must not block every control effect.");
+        Set(specific, "m_Buff", Reference("Kingmaker.Blueprints.BlueprintBuffReference", buff));
+        var bypassFact = New("Kingmaker.Blueprints.Classes.BlueprintFeature");
+        Set(specific, "m_CheckCasterFact", true);
+        Set(specific, "m_FactToCheck", Reference("Kingmaker.Blueprints.BlueprintUnitFactReference", bypassFact));
+        if (Immune(new[] { specific })) throw new Exception("Caster-fact requirements must not be assumed.");
+        protectionProbeFact = bypassFact;
+        if (!Immune(new[] { specific })) throw new Exception("Matching caster fact must enable conditional specific buff immunity.");
+        protectionProbeFact = null;
+        var mind = New("Kingmaker.UnitLogic.FactLogic.BuffDescriptorImmunity");
+        Set(mind, "Descriptor", Wrapper("MindAffecting"));
+        if (!Immune(new[] { mind })) throw new Exception("Mind-affecting immunity must recognize Dominate's buff.");
+        if (Immune(new[] { mind }, mythic: true)) throw new Exception("Native mythic resistance bypass must be honored.");
+        Set(mind, "m_IgnoreFeature", Reference("Kingmaker.Blueprints.BlueprintUnitFactReference", bypassFact));
+        protectionProbeFact = bypassFact;
+        if (Immune(new[] { mind })) throw new Exception("Caster immunity-bypass fact must be honored.");
+        protectionProbeFact = null;
+        Set(mind, "m_IgnoreFeature", null); Set(mind, "CheckFact", true);
+        Set(mind, "m_FactToCheck", Reference("Kingmaker.Blueprints.BlueprintUnitFactReference", bypassFact));
+        if (Immune(new[] { mind })) throw new Exception("Conditional descriptor immunity needs its caster fact.");
+        protectionProbeFact = bypassFact;
+        if (!Immune(new[] { mind })) throw new Exception("Matching caster fact must activate descriptor immunity.");
+        protectionProbeFact = null;
+
+        var apply = New("Kingmaker.UnitLogic.Mechanics.Actions.ContextActionApplyBuff");
+        Set(apply, "m_Buff", Reference("Kingmaker.Blueprints.BlueprintBuffReference", buff));
+        var saved = New("Kingmaker.UnitLogic.Mechanics.Actions.ContextActionConditionalSaved");
+        Set(saved, "Succeed", Actions()); Set(saved, "Failed", Actions(apply));
+        var buffProbe = Delegate.CreateDelegate(typeof(Func<,>).MakeGenericType(buff.GetType(), typeof(bool)),
+            typeof(GameMetadataTests).GetMethod("BuffImmunityProbe", Flags).MakeGenericMethod(buff.GetType()));
+        object Assess(object actions) => protection.GetMethod("EvaluateEffects", Flags)
+            .Invoke(null, new object[] { actions, Components(), null, buffProbe });
+        protectionProbeBuff = buff;
+        Equal(0m, Field(Assess(Actions(saved)), "Factor"), "known immunity rejects actual save-then-domination shape");
+        var hp = Damage("Damage", 1, "D6");
+        var hpType = New("Kingmaker.RuleSystem.Rules.Damage.DamageTypeDescription");
+        SetEnum(hpType, "Type", "Physical"); Set(hp, "DamageType", hpType);
+        Equal(1m, Field(Assess(Actions(saved, hp)), "Factor"), "control immunity must preserve useful HP damage");
+        protectionProbeBuff = null;
+        Equal(1m, Field(Assess(Actions(saved)), "Factor"), "unprotected domination target remains eligible");
+        var hasHp = protection.GetMethod("HasHitPointDamage", Flags);
+        if (!(bool)hasHp.Invoke(null, new object[] { Actions(saved, hp), 0 }) ||
+            (bool)hasHp.Invoke(null, new object[] { Actions(saved), 0 }) ||
+            (bool)hasHp.Invoke(null, new object[] { Actions(Damage("EnergyDrain", 0, "Zero", 1)), 0 }))
+            throw new Exception("HP preference must distinguish damaging abilities from control/drain-only abilities.");
+
+        var part = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(game.GetType("Kingmaker.UnitLogic.Parts.UnitPartSpellResistance"));
+        var immunity = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(game.GetType("Kingmaker.UnitLogic.Parts.UnitPartSpellResistance+SpellImmunity"));
+        SetEnum(immunity, "Type", "SpellDescriptor"); SetEnum(immunity, "SpellDescriptor", "MindAffecting");
+        Set(immunity, "Exceptions", Array.CreateInstance(game.GetType("Kingmaker.UnitLogic.Abilities.Blueprints.BlueprintAbility"), 0));
+        var spell = New("Kingmaker.UnitLogic.Abilities.Blueprints.BlueprintAbility");
+        var native = part.GetType().GetMethods(Flags).Single(method => method.Name == "CanApply" && method.GetParameters().Length == 5);
+        if (!(bool)native.Invoke(part, new object[] { immunity, null, null, Descriptor("MindAffecting, Compulsion"), spell }))
+            throw new Exception("Explicit descriptors must reach the game's native immunity predicate.");
+        if ((bool)native.Invoke(part, new object[] { immunity, null, null, Descriptor("Fire"), spell }))
+            throw new Exception("Mind-affecting spell immunity must not reject unrelated damage spells.");
+        Set(part, "<IgnoreSpellDescriptorImmunities>k__BackingField", Descriptor("MindAffecting"));
+        if ((bool)native.Invoke(part, new object[] { immunity, null, null, Descriptor("MindAffecting, Compulsion"), spell }))
+            throw new Exception("Native descriptor-immunity overrides must be preserved.");
+
+        var targeting = mod.GetType("ArdubsEnemyIntelligence.TargetingState");
+        var learn = Calls(targeting.GetMethod("LearnHitPoints", Flags)).Select(call => call.Name).ToArray();
+        foreach (var name in new[] { "ContainsVisible", "RollKnowledge", "get_HPLeft", "get_MaxHP" })
+            if (!learn.Contains(name)) throw new Exception("HP knowledge must be visible, gated and read current native health: " + name);
+        foreach (var method in new[] { "GetKnowledge", "ObserveCommand" })
+            if (!Calls(targeting.GetMethod(method, Flags)).Any(call => call.Name == "LearnHitPoints"))
+                throw new Exception("HP knowledge must participate in first assessment and defensive retry.");
+    }
+
     private static void TouchDeliveryPathTests()
     {
         // The game's sticky-touch effect queues a second command. Verify the
@@ -1199,6 +1488,9 @@ internal static class GameMetadataTests
             RememberedTargetTests();
             LiveMovementContractTests();
             SleepingTargetTests();
+            ConditionDefenseTests();
+            MindProtectionTests();
+            AbilityFixTests();
             BodyRouteTests();
             BodyStepTests();
             SpellApproachTests();
@@ -1248,6 +1540,23 @@ internal static class GameMetadataTests
             Equal(3m, Field(settings, "StrengthMinimum"), "old custom settings preserved");
             Equal(10m, Field(settings, "SneakMinimum"), "new precision defaults initialized for old Settings.xml");
             Equal(25m, Field(settings, "StatDrainMaximum"), "new stat/drain defaults initialized");
+            Equal(5m, Field(settings, "ConditionVulnerabilityMinimum"), "old settings receive default vulnerability Int minimum");
+            Equal(15m, Field(settings, "ConditionVulnerabilityMaximum"), "old settings receive default vulnerability Int maximum");
+            Equal(5m, Property(settings, "ActiveHitPointsMinimum"), "old settings receive default HP knowledge zero-percent Int");
+            Equal(15m, Property(settings, "ActiveHitPointsMaximum"), "old settings receive default HP knowledge certain Int");
+            Equal(1m, Property(settings, "ActiveHitPointsImportance"), "old settings enable neutral HP importance");
+            var customHp = serializer.Deserialize(new StringReader("<Settings><DefaultHitPointsRange>false</DefaultHitPointsRange><HitPointsMinimum>7</HitPointsMinimum><HitPointsMaximum>21</HitPointsMaximum><DefaultHitPointsImportance>false</DefaultHitPointsImportance><HitPointsImportance>0</HitPointsImportance></Settings>"));
+            var hpSaved = new StringWriter(); serializer.Serialize(hpSaved, customHp);
+            customHp = serializer.Deserialize(new StringReader(hpSaved.ToString()));
+            Equal(7m, Property(customHp, "ActiveHitPointsMinimum"), "custom HP knowledge lower threshold persists");
+            Equal(21m, Property(customHp, "ActiveHitPointsMaximum"), "custom HP knowledge upper threshold persists");
+            Equal(0m, Property(customHp, "ActiveHitPointsImportance"), "disabled HP preference persists");
+            if (!(bool)Field(settings, "DefaultConditionVulnerabilityRange")) throw new Exception("Old settings must use the default vulnerability gate.");
+            var customConditions = serializer.Deserialize(new StringReader("<Settings><DefaultConditionVulnerabilityRange>false</DefaultConditionVulnerabilityRange><ConditionVulnerabilityMinimum>8</ConditionVulnerabilityMinimum><ConditionVulnerabilityMaximum>22</ConditionVulnerabilityMaximum></Settings>"));
+            var conditionSaved = new StringWriter(); serializer.Serialize(conditionSaved, customConditions);
+            customConditions = serializer.Deserialize(new StringReader(conditionSaved.ToString()));
+            Equal(8m, Property(customConditions, "ActiveConditionVulnerabilityMinimum"), "custom vulnerability min persists");
+            Equal(22m, Property(customConditions, "ActiveConditionVulnerabilityMaximum"), "custom vulnerability max persists");
             Equal(1m, Field(settings, "CasterThreatMultiplier"), "old settings get neutral caster tuning");
             Equal(1m, Field(settings, "DistanceImportance"), "old settings get neutral distance tuning");
             if (!(bool)Field(settings, "DefaultCasterThreatMultiplier")) throw new Exception("New weights must default to unchanged behavior.");
@@ -1322,7 +1631,8 @@ internal static class GameMetadataTests
                 foreach (var option in pathOptions)
                 {
                     var expected = (bool)Field(Activator.CreateInstance(settingsType), option);
-                    if (presetName == "Wotr") expected = option == "AllowAlliedPassage" || option == "PreserveSpecialBodyMovement";
+                    if (presetName == "Wotr") expected = option == "AllowAlliedPassage" || option == "PreserveSpecialBodyMovement" ||
+                        option == "IgnoreFriendlyBlockingOnFiveFootStep" || option == "AllowFriendlyStoppingOverlap";
                     if (presetName == "Pnp")
                     {
                         if (option == "IgnoreFriendlyBlockingOnFiveFootStep" || option == "AllowFlyingEnemyPassage") expected = false;
@@ -1330,6 +1640,13 @@ internal static class GameMetadataTests
                     }
                     if ((bool)Field(presets, option) != expected) throw new Exception(presetName + " preset mismatch: " + option);
                 }
+                if ((bool)Property(presets, "BodyBlockingEnabled") != (presetName != "Wotr"))
+                    throw new Exception("Checked friendly-space exceptions must not activate WotR body blocking.");
+                var savedPreset = new StringWriter(); serializer.Serialize(savedPreset, presets);
+                var reloadedPreset = serializer.Deserialize(new StringReader(savedPreset.ToString()));
+                foreach (var option in pathOptions)
+                    if ((bool)Field(reloadedPreset, option) != (bool)Field(presets, option))
+                        throw new Exception(presetName + " preset option must persist: " + option);
                 if ((bool)Field(presets, "ApplyToEnemies") || (bool)Field(presets, "AvoidSleepingTargets") || (bool)Field(presets, "InGameLogging") || (bool)Field(presets, "ShowBodyBlockingInLog"))
                     throw new Exception("Pathfinding presets must preserve AI scope and logging choices.");
                 Equal(3m, Field(presets, "StrengthMinimum"), "pathfinding presets preserve custom knowledge");
@@ -1389,7 +1706,7 @@ internal static class GameMetadataTests
             Set(settings, "DefaultCasterThreatMultiplier", true);
             Equal(10.45m, Property(buildRisk.Invoke(null, new object[] { null, knowledge }), "Risk"),
                 "Default checkbox restores neutral caster weight while retaining other custom values");
-            Console.WriteLine("Game metadata tests passed: occupied in-range preview stops, remembered-target awareness, touch-delivery path handoff, complete attack-route regression, damage/risk integration, native body-clearance hooks, route trimming/pooling, native ending conditions, and settings migration/persistence.");
+            Console.WriteLine("Game metadata tests passed: mind-affecting/domination immunity and bypasses, gated current-HP tracking, intelligence-gated condition AC, occupied in-range preview stops, remembered-target awareness, touch-delivery path handoff, complete attack-route regression, damage/risk integration, native body-clearance hooks, route trimming/pooling, native ending conditions, and settings migration/persistence.");
             return 0;
         }
         catch (Exception exception) { Console.Error.WriteLine(exception); return 1; }

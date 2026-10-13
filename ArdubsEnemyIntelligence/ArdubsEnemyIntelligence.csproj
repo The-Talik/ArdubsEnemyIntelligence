@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>ArdubsEnemyIntelligence</AssemblyName>
     <RootNamespace>ArdubsEnemyIntelligence</RootNamespace>
-    <Version>0.1.62</Version>
+    <Version>0.1.67</Version>
     <Title>Ardub's Enemy Intelligence</Title>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
