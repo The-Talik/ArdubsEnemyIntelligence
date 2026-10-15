@@ -10,6 +10,12 @@ public sealed class Settings : UnityModManager.ModSettings
     public bool ApplyToEnemies = true;
     public bool ApplyToAlliedNpcs = true;
     public bool AvoidSleepingTargets = true;
+    public bool FixAttackOfOpportunityAwareness = true;
+    public bool ExpandReinforcementDetection = true;
+    public bool DefaultReinforcementRangeMultiplier = true;
+    public float ReinforcementRangeMultiplier = 2f;
+    private string? reinforcementRangeMultiplierText;
+    internal float ActiveReinforcementRangeMultiplier => DefaultReinforcementRangeMultiplier ? 2f : ReinforcementRangeMultiplier;
     public bool EnableBodyBlocking = true;
     public bool BlockHostilePassage = true;
     public bool AllowAlliedPassage = true;
@@ -20,7 +26,7 @@ public sealed class Settings : UnityModManager.ModSettings
     public bool PreventStoppingOverlap = true;
     public bool BodyBlockingMovementGuard = true;
     public bool PreserveSpecialBodyMovement = true;
-    public bool BodyBlockingCharges;
+    public bool BodyBlockingCharges = true;
     public bool ShowBodyBlockingInLog = true;
     public bool ProfileCursorPerformance;
     public bool ShowDestinationFootprint = true;
@@ -31,6 +37,7 @@ public sealed class Settings : UnityModManager.ModSettings
     public bool InGameLogging = true;
     public bool UmmLogging = true;
     public bool ShowLearningInLog = true;
+    public bool ShowKnowledgeInHoverInspector;
 
     public bool DefaultReassessmentRange = true;
     public int ReassessmentMinimum = 1;
@@ -238,6 +245,15 @@ public sealed class Settings : UnityModManager.ModSettings
             AvoidSleepingTargets = GUILayout.Toggle(AvoidSleepingTargets,
                 new GUIContent("Enemies: avoid sleeping targets while active opponents remain (Default On)",
                     "This option only affects enemy AI. Unreachable or unseen awake combat opponents still count. Enemy AI can target sleepers once all other opponents are dead or incapacitated. Enabled allied NPCs never directly target sleepers, even with this option off. Player commands are unchanged."));
+            FixAttackOfOpportunityAwareness = GUILayout.Toggle(FixAttackOfOpportunityAwareness,
+                new GUIContent("Fix AoO awareness check (Default On)",
+                    "In turn-based combat, the attacker must know about the provoking unit, not vice versa. Being unaware of an attacker no longer prevents that attacker's opportunity attack. Applies to both sides, including player characters. Native reach, concealment, reaction limits, conditions, and movement exemptions are unchanged. Off restores the vanilla awareness check."));
+            ExpandReinforcementDetection = GUILayout.Toggle(ExpandReinforcementDetection,
+                new GUIContent("Expand enemy reinforcement detection (Default On)",
+                    "While a turn-based battle is underway, eligible waiting enemies can spot its participants farther away. Requires native visibility and a complete terrain-clearance route. One qualifying observer alerts its group through vanilla combat joining. Script-controlled, passive, ambush, non-aggro, and explicit-vision-override groups are left alone. Ordinary exploration detection is unchanged."));
+            DrawWeight("Reinforcement detection multiplier", "Multiplier of the waiting enemy's normal sight range. 1 keeps vanilla detection. Only applies with enemy scope and reinforcement detection enabled.",
+                ref DefaultReinforcementRangeMultiplier, ref ReinforcementRangeMultiplier,
+                ref reinforcementRangeMultiplierText, 2f, 1f);
             GUILayout.Space(8);
             DrawSubheading("Learning");
             DrawDescription("Values are Intelligence scores: 0% chance at or below the 0% value; 100% chance at or above the 100% value.");
@@ -248,6 +264,12 @@ public sealed class Settings : UnityModManager.ModSettings
         });
         DrawSection("Pathfinding", DrawPathfinding);
         DrawSection("Logging", DrawLogging);
+        DrawSection("Developer", () =>
+        {
+            ShowKnowledgeInHoverInspector = GUILayout.Toggle(ShowKnowledgeInHoverInspector,
+                new GUIContent("Show AI knowledge in hover and expanded inspectors (Default Off)",
+                    "Shows the inspected unit's stored assessments and latest Risk / Squish / Dist calculation for each other combatant in the hover tooltip and click-to-expand info window. Unknown and not assessed are distinct. Read-only: inspecting never teaches the AI or recalculates scores. Reopen the inspector to update the snapshot."));
+        });
     }
 
     private static void DrawSection(string heading, Action content)
@@ -345,7 +367,7 @@ public sealed class Settings : UnityModManager.ModSettings
             "Unchecked preserves native movement exemptions. Checked opts these units into the mod's body rules."));
         BodyBlockingCharges = GUILayout.Toggle(BodyBlockingCharges, PathOption("Also apply to charges",
             settings => settings.BodyBlockingCharges,
-            "Enabled by the PnP preset, but not Mod Defaults. Forced movement, teleportation and active cutscenes always remain native."));
+            "Enabled by Mod Defaults and PnP Defaults. Forced movement, teleportation and active cutscenes always remain native."));
         GUI.enabled = previousEnabled && ModEnabled;
         ShowDestinationFootprint = GUILayout.Toggle(ShowDestinationFootprint, PathOption("Show character footprint at destination pin",
             settings => settings.ShowDestinationFootprint,
@@ -465,7 +487,7 @@ public sealed class Settings : UnityModManager.ModSettings
         PreventStoppingOverlap = !vanilla;
         BodyBlockingMovementGuard = !vanilla;
         PreserveSpecialBodyMovement = true; // Inverted UI checkbox: unchecked.
-        BodyBlockingCharges = pnp;
+        BodyBlockingCharges = !vanilla;
         ShowDestinationFootprint = !vanilla;
         ShowFlyingPassageVisual = !vanilla;
     }
@@ -478,6 +500,8 @@ public sealed class Settings : UnityModManager.ModSettings
 
     internal void ValidateRanges(UnityModManager.ModEntry modEntry)
     {
+        ValidateWeight("Reinforcement detection multiplier", ref DefaultReinforcementRangeMultiplier,
+            ref ReinforcementRangeMultiplier, modEntry, 2f, 1f);
         ValidateWeight("Caster threat", ref DefaultCasterThreatMultiplier, ref CasterThreatMultiplier, modEntry);
         ValidateWeight("Physical threat", ref DefaultPhysicalThreatMultiplier, ref PhysicalThreatMultiplier, modEntry);
         ValidateWeight("Sneak / precision threat", ref DefaultSneakThreatMultiplier, ref SneakThreatMultiplier, modEntry);
@@ -597,21 +621,22 @@ public sealed class Settings : UnityModManager.ModSettings
         ControlWidth(GUI.skin.textField, text.Length < 3 ? "000" : text);
 
     private static void ValidateWeight(string label, ref bool useDefault, ref float value,
-        UnityModManager.ModEntry modEntry)
+        UnityModManager.ModEntry modEntry, float defaultValue = 1f, float minimumValue = 0f)
     {
-        if (ScoringWeights.IsValid(value)) return;
-        modEntry.Logger.Warning($"Invalid {label} weight [{value}]; using default 1.");
+        if (ScoringWeights.IsValid(value) && value >= minimumValue) return;
+        modEntry.Logger.Warning($"Invalid {label} weight [{value}]; using default {defaultValue}.");
         useDefault = true;
-        value = 1f;
+        value = defaultValue;
     }
 
     private static void DrawWeight(string label, string explanation, ref bool useDefault,
-        ref float value, ref string? text)
+        ref float value, ref string? text, float defaultValue = 1f, float minimumValue = 0f)
     {
         var labelStyle = new GUIStyle(GUI.skin.label) { wordWrap = false };
         var toggleStyle = new GUIStyle(GUI.skin.toggle) { wordWrap = false };
         GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
-        GUILayout.Label(new GUIContent(label + " (Default 1)", explanation), labelStyle, GUILayout.ExpandWidth(true));
+        var defaultText = defaultValue.ToString("0.##", CultureInfo.InvariantCulture);
+        GUILayout.Label(new GUIContent(label + " (Default " + defaultText + ")", explanation), labelStyle, GUILayout.ExpandWidth(true));
         useDefault = GUILayout.Toggle(useDefault, "Default", toggleStyle,
             GUILayout.Width(ControlWidth(toggleStyle, "Default")));
         GUILayout.Space(8);
@@ -620,8 +645,8 @@ public sealed class Settings : UnityModManager.ModSettings
         try
         {
             GUI.enabled = wasEnabled && !useDefault;
-            var current = useDefault ? 1f : value;
-            var moved = GUILayout.HorizontalSlider(current, 0f, System.Math.Max(3f, current),
+            var current = useDefault ? defaultValue : value;
+            var moved = GUILayout.HorizontalSlider(current, minimumValue, System.Math.Max(defaultValue + 2f, current),
                 GUILayout.MinWidth(80f), GUILayout.ExpandWidth(true));
             if (!useDefault && moved != current)
             {
@@ -629,7 +654,7 @@ public sealed class Settings : UnityModManager.ModSettings
                 text = value.ToString("0.##", CultureInfo.InvariantCulture);
             }
             GUILayout.Space(8);
-            entered = GUILayout.TextField(useDefault ? "1" : text ?? value.ToString("R", CultureInfo.InvariantCulture),
+            entered = GUILayout.TextField(useDefault ? defaultText : text ?? value.ToString("R", CultureInfo.InvariantCulture),
                 GUILayout.Width(InputWidth(text ?? value.ToString("R", CultureInfo.InvariantCulture))));
         }
         finally
@@ -639,9 +664,11 @@ public sealed class Settings : UnityModManager.ModSettings
         }
         if (useDefault) return;
         text = entered;
-        if (float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) && ScoringWeights.IsValid(parsed))
+        if (float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) &&
+            ScoringWeights.IsValid(parsed) && parsed >= minimumValue)
             value = parsed;
-        else DrawDescription("Enter a finite, nonnegative number (previous valid value remains active).");
+        else DrawDescription(minimumValue == 0f ? "Enter a finite, nonnegative number (previous valid value remains active)." :
+            $"Enter a finite number of at least {minimumValue} (previous valid value remains active).");
     }
 
     public override void Save(UnityModManager.ModEntry modEntry)

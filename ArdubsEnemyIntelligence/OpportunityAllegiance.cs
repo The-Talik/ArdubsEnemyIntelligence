@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
+using System.Reflection.Emit;
 using HarmonyLib;
 using Kingmaker.Controllers.Combat;
 using Kingmaker.EntitySystem.Entities;
+using Kingmaker.UnitLogic;
 using Kingmaker.UnitLogic.Commands;
 using Kingmaker.UnitLogic.Commands.Base;
 using TurnBased.Controllers;
@@ -17,6 +20,24 @@ internal static class OpportunityAllegiance
 
     private static bool Enabled => ArdubsEnemyIntelligenceMain.Settings.ModEnabled &&
         CombatController.IsInTurnBasedCombat();
+
+    internal static bool KnowsOpportunityTarget(UnitGroupMemory targetMemory, UnitEntityData attacker,
+        UnitEntityData target)
+    {
+        try
+        {
+            // Native reaction eligibility asks whether the provoking unit knows
+            // the attacker. Threat awareness belongs to the attacker instead.
+            // Do not add either unit to memory or bypass any other native gate.
+            if (ArdubsEnemyIntelligenceMain.Settings.FixAttackOfOpportunityAwareness && Enabled)
+                return attacker.Memory.Contains(target);
+        }
+        catch (Exception exception)
+        {
+            ArdubsEnemyIntelligenceMain.ModEntry.Logger.Error("Attack-of-opportunity awareness: " + exception);
+        }
+        return targetMemory.Contains(attacker);
+    }
 
     private static void Report(UnitEntityData attacker, UnitEntityData target, string stage) =>
         TargetingLog.Write($"Canceled allied attack of opportunity: {attacker.CharacterName} -> " +
@@ -40,6 +61,33 @@ internal static class OpportunityAllegiance
     [HarmonyPatch(typeof(UnitCombatState), nameof(UnitCombatState.AttackOfOpportunity))]
     private static class Reaction
     {
+        [HarmonyTranspiler]
+        private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            var contains = AccessTools.Method(typeof(UnitGroupMemory), nameof(UnitGroupMemory.Contains),
+                new[] { typeof(UnitEntityData) });
+            var replacement = AccessTools.Method(typeof(OpportunityAllegiance), nameof(KnowsOpportunityTarget));
+            var count = 0;
+            foreach (var code in instructions)
+            {
+                if (code.Calls(contains))
+                {
+                    count++;
+                    var target = new CodeInstruction(OpCodes.Ldarg_1);
+                    target.labels.AddRange(code.labels);
+                    target.blocks.AddRange(code.blocks);
+                    code.labels.Clear();
+                    code.blocks.Clear();
+                    yield return target;
+                    code.opcode = OpCodes.Call;
+                    code.operand = replacement;
+                }
+                yield return code;
+            }
+            if (count != 1)
+                throw new InvalidOperationException("Cannot identify the game's opportunity-attack awareness check.");
+        }
+
         [HarmonyPrefix]
         private static bool Prefix(UnitCombatState __instance, UnitEntityData __0, bool __2,
             ref bool __result)

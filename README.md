@@ -22,7 +22,6 @@ In making this mod, the enemies basically seamrolled past my defenses, so I also
 - This is not a replacement for the entire AI, or even the game's action-selection(at this time, anyway).  It's limited to targetting.
 
 The mod is still experimental. Save before trying it in an important encounter, but it should be safe to add/remove from a save at any time.
-For formulas, limitations, and the detailed version history, see the
 
 ## Requirements
 

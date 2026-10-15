@@ -395,6 +395,7 @@ internal static class TargetingPatches
             // the unit, after vanilla mount-target normalization, before any tick.
             if (__state && __instance.Raw.Any(command => ReferenceEquals(command, __0)))
             {
+                Guard(() => BodyBlocking.RememberAttackOrigin(__0));
                 Guard(() => TargetingState.CommitCommand(__0));
                 try { TouchDeliveryPath.Remember(__0); }
                 catch (Exception exception)

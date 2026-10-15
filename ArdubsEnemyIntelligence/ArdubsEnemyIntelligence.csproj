@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>ArdubsEnemyIntelligence</AssemblyName>
     <RootNamespace>ArdubsEnemyIntelligence</RootNamespace>
-    <Version>0.1.67</Version>
+    <Version>0.1.71</Version>
     <Title>Ardub's Enemy Intelligence</Title>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
@@ -27,8 +27,6 @@
   <ItemGroup>
     <None Include="Info.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../README.md" Link="README.md" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="../TECHNICAL_NOTES.md" Link="TECHNICAL_NOTES.md" CopyToOutputDirectory="PreserveNewest"
-          Condition="Exists('$(MSBuildProjectDirectory)/../TECHNICAL_NOTES.md')" />
     <None Include="../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>

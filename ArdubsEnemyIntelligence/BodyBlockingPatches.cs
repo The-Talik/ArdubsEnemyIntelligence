@@ -160,7 +160,7 @@ internal static class BodyBlockingPatches
         {
             var snapshot = BodyBlocking.For(___abPath);
             if (__result && snapshot?.PreventOverlap == true)
-                __result = BodyBlockingPolicy.CanStop(BodyBlocking.ToPoint(__0.node == ___abPath.startNode
+                __result = BodyBlockingPolicy.CanStopAction(snapshot.Origin, BodyBlocking.ToPoint(__0.node == ___abPath.startNode
                     ? ___abPath.originalStartPoint : (Vector3)__0.node.position), snapshot.Bodies);
         }
     }
@@ -201,6 +201,11 @@ internal static class BodyBlockingPatches
     [HarmonyPatch(typeof(UnitCommand), nameof(UnitCommand.IsUnitCloseEnough), new Type[] { })]
     private static class AttackStopClearance
     {
+        [HarmonyPrefix]
+        private static void Prefix(UnitCommand __instance) =>
+            // Covers restored commands too, before the first approach tick.
+            Guard(() => BodyBlocking.RememberAttackOrigin(__instance));
+
         [HarmonyPostfix]
         private static void Postfix(UnitCommand __instance, ref bool __result)
         {

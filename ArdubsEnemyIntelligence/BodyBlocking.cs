@@ -28,6 +28,13 @@ namespace ArdubsEnemyIntelligence;
 internal static class BodyBlocking
 {
     private static readonly ConditionalWeakTable<Path, Snapshot> Paths = new ConditionalWeakTable<Path, Snapshot>();
+    private static readonly ConditionalWeakTable<UnitCommand, CommandOrigin> AttackOrigins =
+        new ConditionalWeakTable<UnitCommand, CommandOrigin>();
+    private sealed class CommandOrigin
+    {
+        internal readonly Point Position;
+        internal CommandOrigin(Point position) { Position = position; }
+    }
     [ThreadStatic] internal static Snapshot? Smoothing;
     private static readonly ConditionalWeakTable<UnitMovementAgent, BlockedStop> Stopped =
         new ConditionalWeakTable<UnitMovementAgent, BlockedStop>();
@@ -114,9 +121,29 @@ internal static class BodyBlocking
         unit.State.IsConscious, unit.State.HasCondition(UnitCondition.Sleeping),
         unit.State.HasCondition(UnitCondition.Unconscious), ArdubsEnemyIntelligenceMain.Settings.IgnoreDownedUnitSpace);
 
+    internal static void RememberAttackOrigin(UnitCommand command)
+    {
+        if (!(command is UnitAttack)) return;
+        var actor = command.Executor?.RiderPart?.SaddledUnit ?? command.Executor;
+        if (actor?.View != null) RememberAttackOriginAt(command, ToPoint(actor.Position));
+    }
+
+    internal static void RememberAttackOriginAt(UnitCommand command, Point position)
+    {
+        // Repeated range checks or resubmission must not turn an occupied
+        // arrival into the command's origin. Weak keys need no save-state data.
+        if (command is UnitAttack) AttackOrigins.GetValue(command, _ => new CommandOrigin(position));
+    }
+
+    internal static bool CanStopAttackAt(UnitCommand command, Point current, Snapshot snapshot) =>
+        !snapshot.PreventOverlap || (AttackOrigins.TryGetValue(command, out var origin)
+            ? BodyBlockingPolicy.CanStopAction(origin.Position, current, snapshot.Bodies)
+            : BodyBlockingPolicy.CanStop(current, snapshot.Bodies));
+
     // An attack can become close enough before its planned path ends. Flying
     // passage permits crossing an enemy, but that intermediate position must
-    // not become the command's stopping point while occupied.
+    // not become the command's stopping point while newly occupied. Acting at
+    // the original position remains legal even if another unit overlaps it.
     internal static bool CanStopAttackApproach(UnitCommand command)
     {
         if (!ArdubsEnemyIntelligenceMain.Settings.BodyBlockingEnabled || !ArdubsEnemyIntelligenceMain.Settings.PreventStoppingOverlap ||
@@ -124,7 +151,7 @@ internal static class BodyBlocking
         var actor = command.Executor?.RiderPart?.SaddledUnit ?? command.Executor;
         if (actor?.View == null) return true;
         var snapshot = Capture(actor.View.AgentASP);
-        return snapshot == null || BodyBlockingPolicy.CanStop(ToPoint(actor.Position), snapshot.Bodies);
+        return snapshot == null || CanStopAttackAt(command, ToPoint(actor.Position), snapshot);
     }
 
     internal static bool UsesFiveFootStep(UnitEntityData unit)
@@ -320,7 +347,7 @@ internal static class BodyBlocking
             !(approach.endingCondition is ABPathWithClearance.LosPathConditionForGrid condition)) return snapped;
         bool Valid(Vector3 point) =>
             GeometryUtils.SqrMechanicsDistance(point, path.originalEndPoint) <= condition.m_ApproachRadius * condition.m_ApproachRadius &&
-            (!snapshot.PreventOverlap || BodyBlockingPolicy.CanStop(ToPoint(point), snapshot.Bodies)) &&
+            (!snapshot.PreventOverlap || BodyBlockingPolicy.CanStopAction(snapshot.Origin, ToPoint(point), snapshot.Bodies)) &&
             (!condition.m_CheckLos || !LineOfSightGeometry.Instance.HasObstacle(point, path.originalEndPoint, condition.m_IgnoredBlockerRadius));
         if (Valid(snapped)) return snapped;
         var node = path.path[path.path.Count - 1];
@@ -498,7 +525,7 @@ internal static class BodyBlocking
     {
         var snapshot = For(path);
         if (snapshot == null || !snapshot.PreventOverlap ||
-            BodyBlockingPolicy.CanStop(ToPoint(point), snapshot.Bodies)) return true;
+            BodyBlockingPolicy.CanStopAction(snapshot.Origin, ToPoint(point), snapshot.Bodies)) return true;
         // Range/LOS alone does not make an intermediate occupied point a legal
         // endpoint. Continue the native tick along its searched route instead
         // of stopping here and forcing GuardSimulation to retract the preview.

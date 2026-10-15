@@ -17,7 +17,7 @@ using TurnBased.Controllers;
 
 namespace ArdubsEnemyIntelligence;
 
-internal static class TargetingState
+internal static partial class TargetingState
 {
     private static readonly Dictionary<UnitEntityData, EnemyMemory> Enemies =
         new Dictionary<UnitEntityData, EnemyMemory>(ReferenceComparer<UnitEntityData>.Instance);
@@ -28,6 +28,7 @@ internal static class TargetingState
     internal static void Reset()
     {
         TouchDeliveryPath.Clear();
+        ReinforcementDetection.Reset();
         Enemies.Clear();
     }
 
@@ -790,6 +791,9 @@ internal static class TargetingState
         }
         finally
         {
+            if (memory.Scores.TryGetValue(state.Action, out var completedScores) &&
+                completedScores.TryGetValue(context.Target.Unit, out var completedTrace))
+                RememberCalculation(memory, state.Action, context.Target.Unit, completedTrace);
             memory.ActivePathScore = null;
         }
     }
@@ -804,10 +808,19 @@ internal static class TargetingState
         }
 
         scores[target] = trace;
+        RememberCalculation(memory, action, target, trace);
         if (memory.SkippedScores.TryGetValue(action, out var skipped))
         {
             skipped.Remove(target);
         }
+    }
+
+    private static void RememberCalculation(EnemyMemory memory, AiAction action, UnitEntityData target,
+        ScoreTrace trace)
+    {
+        var actionName = memory.Profiles.TryGetValue(action, out var profiles) && profiles.Length == 1
+            ? profiles[0].Name : action.Blueprint.name;
+        memory.LastCalculations[target] = new CalculationSnapshot(actionName, string.Join("\n", trace.Details));
     }
 
     private static void RecordSkipped(EnemyMemory memory, AiAction action, UnitEntityData target,
@@ -1482,9 +1495,22 @@ internal static class TargetingState
             new Dictionary<AiAction, HashSet<UnitEntityData>>(ReferenceComparer<AiAction>.Instance);
         internal readonly Dictionary<UnitEntityData, TargetKnowledge> Targets =
             new Dictionary<UnitEntityData, TargetKnowledge>(ReferenceComparer<UnitEntityData>.Instance);
+        internal readonly Dictionary<UnitEntityData, CalculationSnapshot> LastCalculations =
+            new Dictionary<UnitEntityData, CalculationSnapshot>(ReferenceComparer<UnitEntityData>.Instance);
         internal readonly Dictionary<UnitEntityData, OffensiveAssessment.Snapshot?> OffensiveEstimates =
             new Dictionary<UnitEntityData, OffensiveAssessment.Snapshot?>(ReferenceComparer<UnitEntityData>.Instance);
         internal readonly HashSet<RuleAttackRoll> UsefulNonHp = new HashSet<RuleAttackRoll>();
+    }
+
+    private sealed class CalculationSnapshot
+    {
+        internal readonly string Action;
+        internal readonly string Details;
+        internal CalculationSnapshot(string action, string details)
+        {
+            Action = action;
+            Details = details;
+        }
     }
 
     private sealed class ScoreTrace

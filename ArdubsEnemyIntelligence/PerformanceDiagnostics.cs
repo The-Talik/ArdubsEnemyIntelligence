@@ -18,6 +18,7 @@ internal static class PerformanceDiagnostics
         RouteFinalization,
         FlyingVisual,
         CombatLogWrite,
+        Reinforcements,
         Count
     }
 

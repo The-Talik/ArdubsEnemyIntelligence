@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace ArdubsEnemyIntelligence;
 
@@ -70,6 +71,8 @@ internal sealed class EffectivenessMemory
     private readonly Dictionary<string, int> hits = new Dictionary<string, int>(StringComparer.Ordinal);
 
     internal int Hits(string profile) => hits.TryGetValue(profile, out var count) ? count : 0;
+
+    internal KeyValuePair<string, int>[] Snapshot() => hits.ToArray();
 
     internal int Observe(string profile, int finalDamage, int rawDamage,
         int beforeReduction, bool immune)

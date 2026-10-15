@@ -92,6 +92,11 @@ internal static class BodyBlockingPolicy
     internal static bool CanStop(Point p, IReadOnlyList<Body> bodies) =>
         bodies.All(b => !b.BlocksStopping || Squared(p, b.Center) + Epsilon >= b.Radius * b.Radius);
 
+    // Occupancy constrains a new movement endpoint, not acting in the space a
+    // command already occupied. Do not make an existing overlap prevent actions.
+    internal static bool CanStopAction(Point origin, Point current, IReadOnlyList<Body> bodies) =>
+        Length(origin, current) <= Epsilon || CanStop(current, bodies);
+
     internal static bool CanTraverse(Point p, Point origin, IReadOnlyList<Body> bodies)
     {
         foreach (var b in bodies)
